@@ -102,8 +102,8 @@ def readSwitch(name: str, default: bool) -> bool:
 def makeProvider():
     """创建 OpenAI provider；这里直接测 provider，不经过 AstrBot main.py。"""
     sys.path.insert(0, str(packageParentDir))  # 让 Python 能按包名导入当前插件。
-    from astrbot_plugin_image_generation.data import ProviderConfig, ProviderType  # 导入插件里的数据结构。
-    from astrbot_plugin_image_generation.provider.openAI import OpenAI  # 导入这次要测试的 OpenAI 适配器。
+    from astrbot_plugin_super_draw.data import ProviderConfig, ProviderType  # 导入插件里的数据结构。
+    from astrbot_plugin_super_draw.provider.openAI import OpenAI  # 导入这次要测试的 OpenAI 适配器。
 
     config = ProviderConfig(  # 组装一个最小 OpenAI 配置。
         type=ProviderType.openAI,  # 指明这是 OpenAI 供应商。
@@ -121,7 +121,7 @@ def makeProvider():
 
 def makeTextRequest():
     """创建文生图请求。"""
-    from astrbot_plugin_image_generation.data import ImageRequest  # 导入统一请求对象。
+    from astrbot_plugin_super_draw.data import ImageRequest  # 导入统一请求对象。
 
     return ImageRequest(  # 用插件正式使用的数据结构来测试。
         prompt=readEnv("TEXT_PROMPT", "一只白色小猫坐在木桌旁看雨"),  # 文生图提示词。
@@ -133,8 +133,8 @@ def makeTextRequest():
 
 async def makeImageRequest():
     """创建图生图请求；没有 REFERENCE_IMAGE 时返回 None，让脚本跳过图生图。"""
-    from astrbot_plugin_image_generation.data import ImageRequest  # 导入统一请求对象。
-    from astrbot_plugin_image_generation.tool.picture import convertPicture, detectMimeType  # 使用项目自己的图片处理工具。
+    from astrbot_plugin_super_draw.data import ImageRequest  # 导入统一请求对象。
+    from astrbot_plugin_super_draw.tool.picture import convertPicture, detectMimeType  # 使用项目自己的图片处理工具。
 
     imagePathText = readEnv("REFERENCE_IMAGE", "")  # 从 .env 读取参考图路径。
     if not imagePathText:  # 用户没填参考图时不测图生图。

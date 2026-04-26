@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://json-schema.org/draft-07/schema#
-name: astrbot_plugin_image_generation
+name: astrbot_plugin_super_draw
 display_name: 超级生图
 desc: 超级生图插件，支持多种生图
 version: v1.0.0

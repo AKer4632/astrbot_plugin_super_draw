@@ -1,5 +1,5 @@
 [project]
-name = "astrbot-plugin-image-generation"
+name = "astrbot_plugin_super_draw"
 version = "1.0.0"
 description = "AstrBot 通用图像生成插件，支持多供应商、文生图、图生图、预设和 LLM 工具调用。"
 readme = "README.md"
