@@ -93,6 +93,12 @@ def readEnv(name: str, default: str | None = "") -> str | None:
     return value.strip() or default  # 空字符串也按默认值处理。
 
 
+def readSwitch(name: str, default: bool) -> bool:
+    """读取 true/false 开关；.env 里写 false、0、no 都表示关闭。"""
+    value = str(readEnv(name, "true" if default else "false")).lower()  # 统一转小写，避免 True/FALSE 这类大小写差异。
+    return value not in {"false", "0", "no", "off", "关闭"}  # 只把明确的关闭词当作 False。
+
+
 def makeProvider():
     """创建 OpenAI provider；这里直接测 provider，不经过 AstrBot main.py。"""
     sys.path.insert(0, str(packageParentDir))  # 让 Python 能按包名导入当前插件。
@@ -190,8 +196,10 @@ async def main() -> None:
     loadEnvFile(workspaceDir / ".env")  # 读取本目录下的 .env。
     provider = makeProvider()  # 创建 OpenAI provider。
     try:  # provider 里有 aiohttp 会话，用完要关闭。
-        await runTextToImage(provider)  # 先测试文生图。
-        await runImageToImage(provider)  # 再测试图生图。
+        if readSwitch("RUN_TEXT_TO_IMAGE", True):  # 开关打开时才测试文生图。
+            await runTextToImage(provider)  # 先测试文生图。
+        if readSwitch("RUN_IMAGE_TO_IMAGE", True):  # 开关打开时才测试图生图。
+            await runImageToImage(provider)  # 再测试图生图。
     finally:  # 不管成功失败，都关闭网络会话。
         await provider.close()  # 关闭 aiohttp session，避免终端提示未关闭连接。
 
