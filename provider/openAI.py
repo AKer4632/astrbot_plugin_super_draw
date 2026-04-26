@@ -23,8 +23,11 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
     """OpenAI 生图接口。"""
 
     def getAbilities(self) -> ImageAbility:  # 定义一个可重复调用的小动作。
-        """告诉 image.py：OpenAI 支持文生图、图生图、图片比例和清晰度。"""
-        return ImageAbility.textToImage | ImageAbility.imageToImage | ImageAbility.aspectRatio | ImageAbility.resolution  # 把结果交回调用者，这就是本步的反馈。
+        """告诉 image.py：OpenAI 一定支持文生图；只有 gpt-image 系列才支持图生图。"""
+        abilities = ImageAbility.textToImage | ImageAbility.aspectRatio | ImageAbility.resolution  # OpenAI 文生图、比例、清晰度是基础能力。
+        if self.canEditImages():  # 只有当前模型是 gpt-image 系列时，才把图生图能力暴露给命令和 LLM 工具。
+            abilities = abilities | ImageAbility.imageToImage  # 把图生图能力加进去，让上层可以收参考图。
+        return abilities  # 把当前模型真实支持的能力交回调用者。
 
     async def generateOnce(self, request: ImageRequest) -> tuple[list[bytes] | None, str | None]:  # 定义一个需要等待网络或文件的异步动作。
         """按有没有参考图，选择文生图或图生图。"""
@@ -54,7 +57,7 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
     async def editImages(self, request: ImageRequest) -> tuple[list[bytes] | None, str | None]:  # 定义一个需要等待网络或文件的异步动作。
         """图生图：把参考图和提示词一起发给 OpenAI。"""
         if not self.canEditImages():  # 先判断这个情况，避免后面流程出错。
-            return None, f"模型 {self.model or 'dall-e-3'} 不支持 OpenAI 图生图，请切换到 gpt-image 系列或 dall-e-2。"  # 把结果交回调用者，这就是本步的反馈。
+            return None, f"模型 {self.model or 'dall-e-3'} 不支持 OpenAI 图生图，请切换到 gpt-image 系列。"  # DALL-E 系列不支持这里的图生图流程。
 
         startTime = time.time()  # 记录开始时间。
         url = self.imageURL("edits")  # 图生图接口地址。
@@ -94,7 +97,7 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
 
     def buildEditForm(self, request: ImageRequest) -> aiohttp.FormData:  # 定义一个可重复调用的小动作。
         """准备图生图要发送的表单。"""
-        isGPTImage = self.isGPTImageModel()  # GPT Image 系列支持多图和更多尺寸。
+        isGPTImage = True  # 能走到这里已经通过 canEditImages，当前模型一定是 gpt-image 系列。
         form = aiohttp.FormData()  # 表单可以同时放文字字段和图片文件。
         form.add_field("model", self.model or "gpt-image-2")  # 模型名。
         form.add_field("prompt", request.prompt)  # 提示词。
@@ -105,9 +108,6 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
             form.add_field("size", size)  # 这一行按当前流程执行，作用见上方说明。
         if quality:  # 先判断这个情况，避免后面流程出错。
             form.add_field("quality", quality)  # 这一行按当前流程执行，作用见上方说明。
-        if not isGPTImage:  # 先判断这个情况，避免后面流程出错。
-            form.add_field("response_format", "b64_json")  # dall-e-2 需要明确返回 base64。
-
         for index, image in enumerate(request.images[:16]):  # 逐个处理这组内容，避免漏掉任何一项。
             form.add_field(  # 这一行按当前流程执行，作用见上方说明。
                 "image[]",  # OpenAI 多图字段；多张图就重复添加。
@@ -120,7 +120,7 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
     def canEditImages(self) -> bool:  # 定义一个可重复调用的小动作。
         """判断当前模型能不能图生图。"""
         model = self.model or "gpt-image-2"  # 没填模型时按 gpt-image-2 处理。
-        return model.startswith("gpt-image") or model == "dall-e-2"  # 把结果交回调用者，这就是本步的反馈。
+        return model.startswith("gpt-image")  # 只有 gpt-image 系列支持 OpenAI 图生图；DALL-E 系列不走这里。
 
     def isGPTImageModel(self) -> bool:  # 定义一个可重复调用的小动作。
         """判断是不是 GPT Image 系列。"""
@@ -144,16 +144,16 @@ class OpenAI(BaseProvider):  # 定义一组放在一起的数据或行为。
         return qualityByResolution.get(resolution)  # 把结果交回调用者，这就是本步的反馈。
 
     def mapEditSize(self, aspectRatio: str | None, isGPTImage: bool) -> str | None:  # 定义一个可重复调用的小动作。
-        """图生图尺寸；dall-e-2 只走方图。"""
+        """图生图尺寸；当前只服务 gpt-image 系列。"""
         if isGPTImage:  # 先判断这个情况，避免后面流程出错。
             return self.mapSize(aspectRatio, True)  # 把结果交回调用者，这就是本步的反馈。
-        return "1024x1024"  # 把结果交回调用者，这就是本步的反馈。
+        return None  # 备用返回；正常不会走到这里。
 
     def mapEditQuality(self, resolution: str | None, isGPTImage: bool) -> str | None:  # 定义一个可重复调用的小动作。
-        """图生图质量；dall-e-2 只用 standard。"""
+        """图生图质量；当前只服务 gpt-image 系列。"""
         if isGPTImage:  # 先判断这个情况，避免后面流程出错。
             return self.mapQuality(resolution, True)  # 把结果交回调用者，这就是本步的反馈。
-        return "standard"  # 把结果交回调用者，这就是本步的反馈。
+        return None  # 备用返回；正常不会走到这里。
 
     def extensionForMime(self, mimeType: str) -> str:  # 定义一个可重复调用的小动作。
         """按图片格式给临时文件名补后缀。"""

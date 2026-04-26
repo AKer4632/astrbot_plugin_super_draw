@@ -91,7 +91,7 @@
       },
       "openai": {
         "name": "OpenAI 接口",
-        "hint": "使用 OpenAI 的图像生成接口",
+        "hint": "使用 OpenAI 的图像生成接口；只有 gpt-image 系列支持图生图，DALL-E 系列只建议用于文生图",
         "items": {
           "name": {
             "description": "适配器名称",
