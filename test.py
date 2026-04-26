@@ -6,7 +6,7 @@
 2. 如果 .env 里填了 REFERENCE_IMAGE，就用同一个 OpenAI 适配器测试图生图。
 
 使用方法：
-1. 复制或直接修改 .env，把 OPENAI_API_KEY 填成真实 Key。
+1. 复制 .env.example 为 .env，再把 OPENAI_API_KEY 填成真实 Key。
 2. 想测图生图，就把 REFERENCE_IMAGE 填成本地图片路径。
 3. 在本目录执行 python test.py。
 4. 生成结果会保存到 testOutput 文件夹。
@@ -65,7 +65,7 @@ def installAstrBotTestStub() -> None:
 def loadEnvFile(envPath: Path) -> None:
     """读取 .env 文件；只支持 KEY=VALUE 这种最简单、最清楚的写法。"""
     if not envPath.exists():  # 没有 .env 就提示用户先创建。
-        raise FileNotFoundError(f"没有找到 {envPath}，请先按模板创建 .env。")  # 直接停止，避免拿空 Key 请求。
+        raise FileNotFoundError(f"没有找到 {envPath}，请先复制 .env.example 为 .env。")  # 直接停止，避免拿空 Key 请求。
 
     for line in envPath.read_text(encoding="utf-8").splitlines():  # 一行一行读取配置。
         text = line.strip()  # 去掉首尾空格，减少手写配置出错。

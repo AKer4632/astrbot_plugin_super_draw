@@ -1,11 +1,11 @@
 [project]
 name = "astrbot-plugin-image-generation"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "AstrBot 通用图像生成插件，支持多供应商、文生图、图生图、预设和 LLM 工具调用。"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.13.5",
-    "pillow>=12.2.0",
-    "pydantic>=2.13.3",
+    "aiohttp>=3.9.0",
+    "Pillow>=10.0.0",
+    "pydantic>=2.0.0",
 ]

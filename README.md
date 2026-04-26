@@ -29,7 +29,7 @@
 
 ## 安装要求
 
-- AstrBot `>= 4.10.4`
+- AstrBot `>= 4.20.1`
 - Python `>= 3.10`
 - 依赖见 [requirements.txt](./requirements.txt)
 
