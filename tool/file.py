@@ -1,7 +1,11 @@
 """
-这个文件放“文件”小工具。
+通用文件工具：保存图片、清理缓存。
 
-它不懂生图业务，只做两件普通事：保存图片文件、清理太旧的缓存文件。
+不依赖 AstrBot，只做两件事：把图片字节写成文件、删除过多的旧缓存。
+
+调用示例：
+path = saveImage(cacheDir, imageBytes)
+await cleanCache(cacheDir, maxCount=100)
 """
 
 from __future__ import annotations
@@ -11,37 +15,45 @@ import os
 import time
 from pathlib import Path
 
-from astrbot.api import logger
+
+def saveImage(cacheDir: Path, imageBytes: bytes) -> str | None:
+    """
+    保存图片字节到缓存目录，返回文件路径字符串。
+    文件名用时间戳+内容哈希，保证不重复。
+    失败返回 None。
+    """
+    try:
+        cacheDir.mkdir(parents=True, exist_ok=True)
+        imageHash = hashlib.md5(imageBytes).hexdigest()[:8]  # 内容哈希防重名
+        fileName = f"gen_{int(time.time())}_{imageHash}.png"
+        filePath = cacheDir / fileName
+        filePath.write_bytes(imageBytes)
+        return str(filePath)
+    except Exception:
+        return None
 
 
-def saveGeneratedPicture(cacheDir: Path, taskID: str, imageBytes: bytes) -> str | None:  # 定义一个可重复调用的小动作。
-    """保存生成好的图片，返回文件路径。"""
-    try:  # 尝试执行可能失败的外部操作。
-        cacheDir.mkdir(parents=True, exist_ok=True)  # 没有 cache 目录就先创建。
-        imageHash = hashlib.md5(imageBytes).hexdigest()[:6]  # 用图片内容做短编号，避免文件名重复。
-        filePath = cacheDir / f"gen_{taskID}_{int(time.time())}_{imageHash}.png"  # 文件名里带任务号和时间。
-        filePath.write_bytes(imageBytes)  # 把图片字节写进文件。
-        return str(filePath)  # AstrBot 发本地图片需要字符串路径。
-    except Exception as exc:  # noqa: BLE001
-        logger.error(f"[ImageGen] 保存图片失败: {exc}")  # 这一行按当前流程执行，作用见上方说明。
-        return None  # 把结果交回调用者，这就是本步的反馈。
+async def cleanCache(cacheDir: Path, maxCount: int) -> int:
+    """
+    缓存文件超过 maxCount 时删除最旧的，返回删除数量。
+    按文件修改时间排序，最旧的先删。
+    """
+    if not cacheDir.exists():
+        return 0
 
+    # 收集所有文件和修改时间
+    files = [(path, os.path.getmtime(path)) for path in cacheDir.iterdir() if path.is_file()]
+    files.sort(key=lambda item: item[1])  # 修改时间越早排越前
 
-async def cleanCache(cacheDir: Path, maxCacheCount: int) -> None:  # 定义一个需要等待网络或文件的异步动作。
-    """缓存太多时删除最旧的文件。"""
-    if not cacheDir.exists():  # 先判断这个情况，避免后面流程出错。
-        return  # 目录不存在说明还没有缓存。
+    if len(files) <= maxCount:
+        return 0  # 没超限制，不用删
 
-    files = [(path, os.path.getmtime(path)) for path in cacheDir.iterdir() if path.is_file()]  # 记录文件和修改时间。
-    files.sort(key=lambda item: item[1])  # 修改时间越早，排得越前。
-    if len(files) <= maxCacheCount:  # 先判断这个情况，避免后面流程出错。
-        return  # 文件数量没超限制，不需要删除。
-
-    deletedCount = 0  # 记录删了几个，方便日志检查。
-    for path, changeTime in files[: len(files) - maxCacheCount]:  # 逐个处理旧缓存；changeTime 只用于排序，删除时不用它。
-        try:  # 尝试执行可能失败的外部操作。
-            path.unlink()  # 删除旧文件。
-            deletedCount += 1  # 保存这一项数据，后面的流程会继续使用。
-        except OSError as exc:  # 把异常变成可读的错误或日志，避免插件崩掉。
-            logger.debug(f"[ImageGen] 删除缓存文件失败: {path} - {exc}")  # 这一行按当前流程执行，作用见上方说明。
-    logger.info(f"[ImageGen] 已清理 {deletedCount} 个旧缓存文件。")  # 这一行按当前流程执行，作用见上方说明。
+    # 删除最旧的文件，保留 maxCount 个
+    deletedCount = 0
+    for path, _ in files[: len(files) - maxCount]:
+        try:
+            path.unlink()
+            deletedCount += 1
+        except OSError:
+            pass  # 删不掉就跳过，不影响其他文件
+    return deletedCount

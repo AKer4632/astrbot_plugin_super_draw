@@ -5,247 +5,34 @@
     "type": "bool",
     "default": true
   },
-  "api_providers": {
-    "type": "template_list",
-    "description": "API 供应商配置",
-    "hint": "配置多个图像生成 API 供应商",
-    "templates": {
-      "gemini": {
-        "name": "Gemini 接口",
-        "hint": "使用 Gemini 的图像生成接口",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "gemini-3-pro-image-preview",
-              "gemini-2.5-flash-image",
-              "gemini-2.5-flash-image-preview"
-            ]
-          }
-        }
+  "api": {
+    "description": "API 配置",
+    "hint": "OpenAI 兼容格式的图片生成接口配置，支持任何提供 OpenAI 兼容 API 的中转站",
+    "type": "object",
+    "items": {
+      "base_url": {
+        "description": "API Base URL",
+        "hint": "OpenAI 兼容接口地址，例如 https://api.openai.com 或中转站地址",
+        "type": "string",
+        "default": ""
       },
-      "gemini_openai": {
-        "name": "Gemini OpenAI兼容接口",
-        "hint": "使用兼容Openai格式的 Gemini图像生成接口",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "gemini-3-pro-image",
-              "gemini-2.5-flash-image"
-            ]
-          }
-        }
+      "api_keys": {
+        "description": "API Keys",
+        "hint": "支持多个 Key 轮换使用",
+        "type": "list",
+        "default": []
       },
-      "openai": {
-        "name": "OpenAI 接口",
-        "hint": "使用 OpenAI 的图像生成接口；只有 gpt-image 系列支持图生图，DALL-E 系列只建议用于文生图",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "gpt-image-2",
-              "gpt-image-1.5",
-              "gpt-image-1",
-              "gpt-image-1-mini",
-              "dall-e-3"
-            ]
-          }
-        }
+      "model": {
+        "description": "模型名称",
+        "hint": "例如 gpt-image-2、gpt-image-1 等，取决于中转站支持的模型",
+        "type": "string",
+        "default": "gpt-image-2"
       },
-      "z_image_gitee": {
-        "name": "Z-Image (Gitee) 接口",
-        "hint": "使用Gitee的 Z-Image 图像生成接口",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "z-image-turbo"
-            ]
-          }
-        }
-      },
-      "jimeng2api": {
-        "name": "即梦逆向生图接口",
-        "hint": "使用[iptag/jimeng-api]项目的图像生成接口",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "jimeng-4.5",
-              "nanobanana"
-            ]
-          }
-        }
-      },
-      "grok": {
-        "name": "Grok (xAI) 接口",
-        "hint": "使用 Grok 的图像生成接口",
-        "items": {
-          "name": {
-            "description": "适配器名称",
-            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "API Base URL",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "例如: http://127.0.0.1:7890",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API Keys",
-            "hint": "仅在未选择系统提供商时需要填写",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换时的可选模型。",
-            "type": "list",
-            "default": [
-              "grok-imagine-image-pro",
-              "grok-imagine-image"
-            ]
-          }
-        }
+      "proxy": {
+        "description": "代理地址",
+        "hint": "例如: http://127.0.0.1:7890",
+        "type": "string",
+        "default": ""
       }
     }
   },
@@ -254,12 +41,6 @@
     "hint": "图像生成的行为配置",
     "type": "object",
     "items": {
-      "model": {
-        "description": "生图模型",
-        "hint": "可以通过 /生图模型 命令切换,格式为 '适配器名称/模型名称',留空自动使用第一个可用模型",
-        "type": "string",
-        "default": ""
-      },
       "timeout": {
         "description": "生图超时时间（秒）",
         "type": "int",
@@ -282,7 +63,7 @@
       },
       "max_concurrent_tasks": {
         "description": "最大并发任务数",
-        "hint": "同时生成图片的最大数量,防止资源耗尽",
+        "hint": "同时生成图片的最大数量",
         "type": "int",
         "slider": {
           "min": 1,
@@ -293,43 +74,27 @@
       },
       "default_aspect_ratio": {
         "description": "默认宽高比",
-        "hint": "使用命令生图时默认使用的图片宽高比。选择自动时由模型自行决定",
+        "hint": "选择自动时由模型自行决定",
         "type": "string",
         "default": "自动",
-        "options": [
-          "自动",
-          "1:1",
-          "2:3",
-          "3:2",
-          "3:4",
-          "4:3",
-          "4:5",
-          "5:4",
-          "9:16",
-          "16:9",
-          "21:9"
-        ]
+        "options": ["自动", "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
       },
       "default_resolution": {
         "description": "默认分辨率",
-        "hint": "使用命令生图时默认使用的图片分辨率（仅部分模型支持）",
+        "hint": "图片质量等级",
         "type": "string",
         "default": "1K",
-        "options": [
-          "1K",
-          "2K",
-          "4K"
-        ]
+        "options": ["1K", "2K", "4K"]
       },
       "show_generation_info": {
         "description": "显示生图信息",
-        "hint": "生图成功后,发送消息展示生图耗时和生成图片数量",
+        "hint": "生图成功后展示耗时和数量",
         "type": "bool",
         "default": false
       },
       "show_model_info": {
         "description": "显示模型信息",
-        "hint": "生图成功后,发送消息展示所使用的模型名称",
+        "hint": "生图成功后展示模型名称",
         "type": "bool",
         "default": false
       }
@@ -342,7 +107,7 @@
     "items": {
       "rate_limit_seconds": {
         "description": "速率限制（秒）",
-        "hint": "单个用户两次请求之间的最小间隔时间,0 表示不限制",
+        "hint": "单个用户两次请求之间的最小间隔,0 表示不限制",
         "type": "int",
         "slider": {
           "min": 0,
@@ -353,7 +118,7 @@
       },
       "max_image_size_mb": {
         "description": "最大图片限制 (MB)",
-        "hint": "允许上传的参考图最大大小,超过此大小的图片将被忽略",
+        "hint": "参考图最大大小,超过将被忽略",
         "type": "int",
         "slider": {
           "min": 1,
@@ -364,13 +129,11 @@
       },
       "enable_daily_limit": {
         "description": "启用每日生图数量限制",
-        "hint": "开启后将限制每个用户每日生成的图片数量",
         "type": "bool",
         "default": false
       },
       "daily_limit_count": {
         "description": "每日生图数量限制次数",
-        "hint": "每个用户每日允许生成的最大图片数量",
         "type": "int",
         "slider": {
           "min": 1,
@@ -388,7 +151,6 @@
     "items": {
       "max_cache_count": {
         "description": "最大缓存图片数量",
-        "hint": "超过此数量将清理旧图片",
         "type": "int",
         "slider": {
           "min": 10,
@@ -399,7 +161,6 @@
       },
       "cleanup_interval_hours": {
         "description": "定时清理间隔 (小时)",
-        "hint": "每隔多少小时清理一次缓存",
         "type": "int",
         "slider": {
           "min": 1,
@@ -412,15 +173,12 @@
   },
   "presets": {
     "description": "预设提示词",
-    "hint": "预定义的图片生成提示词模板。简单格式: '名称:提示词'。高级格式: '名称:{\"prompt\":\"提示词\",\"aspect_ratio\":\"16:9\",\"resolution\":\"2K\",\"description\":\"描述\"}'",
+    "hint": "预定义的图片生成提示词模板。格式: '名称:提示词'",
     "type": "list",
     "default": [
-      "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character. The final image must be in a realistic style and environment.\n\n**Crucial Instruction on Face & Likeness:** The figurine's face is the most critical element. It must be a perfect, high-fidelity 3D translation of the character from the source image. The sculpt must be sharp, clean, and intricately detailed, accurately capturing the original artwork's facial structure, eye style, expression, and hair. The final result must be immediately recognizable as the same character, elevated to a premium physical product standard. Do NOT generate a generic or abstract face.\n\n**Scene Composition (Strictly follow these details):**\n1. **Figurine & Base:** Place the figure on a computer desk. It must stand on a simple, circular, transparent acrylic base WITHOUT any text or markings.\n2. **Computer Monitor:** In the background, a computer monitor must display 3D modeling software (like ZBrush or Blender) with the digital sculpt of the very same figurine visible on the screen.\n3. **Artwork Display:** Next to the computer screen, include a transparent acrylic board with a wooden base. This board holds a print of the original 2D artwork that the figurine is based on.\n4. **Environment:** The overall setting is a desk, with elements like a keyboard to enhance realism. The lighting should be natural and well-lit, as if in a room.",
+      "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character.",
       "绘画四宫格:Step 1: line drawing. Step 2: tile colors. Step 3: Add Shadows. Step 4: Refine and shape. No words",
-      "发型九宫格:A professional hairstyle showcase based on the input image of a person's upper body and face, displaying the character with nine distinct hairstyles arranged in a clean, grid-like layout (3x3 grid) on a single image. Each hairstyle replaces the original hair while preserving the person's facial features, skin tone, and clothing details from the input image. The hairstyles include a variety of styles: short pixie cut, long wavy hair, sleek bob, voluminous curls, high ponytail, messy bun, side-swept bangs, braided updo, and straight layered cut, each rendered with realistic textures and natural lighting. The background is a consistent, neutral color (pure white or light gray) to emphasize the hairstyles and maintain a polished, professional look suitable for hairstyle selection. Subtle labels beneath each hairstyle indicate the style name for clarity.",
-      "头像九宫格:Id photos of the person in the picture with 9 different hairstyles, showing close-ups of the person with each hairstyle (Japanese, Korean, n) , keeping the features and clothes, and integration of the output for a nine grid picture",
-      "表情九宫格:Transform the input person image (half-body portrait) into a 3x3 grid of nine distinct images, each showcasing a different facial expression with the corresponding text label below the face, while retaining the original character's facial features, hairstyle, and clothing details. Arrange the expressions as follows: top row (happy with raised corners and squinted eyes labeled 'Happy', sad with downturned mouth and raised inner brows labeled 'Sad', angry with furrowed brows and narrowed eyes labeled 'Angry'); middle row (surprised with wide eyes and open mouth labeled 'Surprised', fearful with wide eyes and tense brows labeled 'Fearful', disgusted with wrinkled nose and pursed lips labeled 'Disgusted'); bottom row (confused with uneven brows and asymmetrical mouth labeled 'Confused', proud with lifted chin and firm gaze labeled 'Proud', embarrassed with tense smile and downward gaze labeled 'Embarrassed'). Ensure each cell reflects the described expression naturally, with seamless completion of the lower body to match the original clothing style. Use a soft, unified background (e.g., light gray) and consistent lighting across all grids to maintain coherence and focus on the expressions.",
-      "表情包:{\"prompt\": \"为我生成图中角色的绘制 Q 版的,LINE 风格的半身像表情包,注意头饰要正确\\n彩色手绘风格,使用 4x6 布局,涵盖各种各样的常用聊天语句,或是一些有关的娱乐 meme\\n其他需求:不要原图复制。所有标注为手写简体中文。\", \"aspect_ratio\": \"16:9\", \"resolution\": \"2K\"}"
+      "表情包:{\"prompt\": \"为我生成图中角色的 Q 版 LINE 风格半身像表情包,4x6 布局,涵盖常用聊天语句\", \"aspect_ratio\": \"16:9\", \"resolution\": \"2K\"}"
     ]
   }
 }
