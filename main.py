@@ -11,7 +11,7 @@ data.py 只管数据，tool 文件夹只管通用工具。
 用户发送 /生图 手办化 加一个透明展示盒
 用户发送 /预设
 用户发送 /预设 添加 水彩:柔和水彩风格，高细节
-LLM 调用 generate_image(prompt="画一只猫", aspectRatio="1:1", quality="high")
+LLM 调用 generate_image(prompt="画一只猫", imageUrls=["https://example.com/cat.jpg"])
 """
 
 from __future__ import annotations
@@ -64,7 +64,6 @@ class SuperDraw(Star):
         self.semaphore = asyncio.Semaphore(self.data.maxConcurrent)  # 控制同时生图数量
         self.backgroundTasks: set[asyncio.Task] = set()  # 记录后台任务，卸载时统一取消
 
-
     async def initialize(self):
         """插件加载时注册 LLM 工具，并启动缓存清理循环。"""
         if not self.data.apiKeys:
@@ -77,7 +76,6 @@ class SuperDraw(Star):
         self._startBackground(self._cleanCacheLoop(), "cache_cleanup")
         logger.info(f"[SuperDraw] 插件加载完成，模型：{self.data.model}")
 
-
     async def terminate(self):
         """插件卸载时取消后台任务并关闭 OpenAI 客户端。"""
         for task in list(self.backgroundTasks):
@@ -88,7 +86,6 @@ class SuperDraw(Star):
         self.backgroundTasks.clear()
         await self.generator.close()
         logger.info("[SuperDraw] 插件已卸载。")
-
 
     @filter.command("生图")
     async def cmdGenerate(self, event: AstrMessageEvent):
@@ -117,7 +114,6 @@ class SuperDraw(Star):
             f"generate_{taskID}",
         )
 
-
     @filter.command("预设")
     async def cmdPreset(self, event: AstrMessageEvent):
         """用户发送 /预设 时进入这里：展示、添加或删除预设。"""
@@ -137,7 +133,6 @@ class SuperDraw(Star):
 
         yield event.plain_result("格式错误：/预设、/预设 添加 名称:内容、/预设 删除 名称")
 
-
     async def _generateAndSend(self, chatID: str, prompt: str, images: list[bytes], size: str, quality: str) -> None:
         """后台执行生图并发送结果；成功记录用量，失败发错误消息。"""
         async with self.semaphore:
@@ -155,7 +150,6 @@ class SuperDraw(Star):
                 logger.error(f"[SuperDraw] 生成失败：{exc}")
                 await self.context.send_message(chatID, MessageChain().message(f"生成失败：{exc}"))
 
-
     def _buildImageChain(self, resultImages: list[bytes]) -> MessageChain:
         """把图片字节保存成文件，并组装成 AstrBot 可发送的消息链。"""
         chain = MessageChain()
@@ -165,20 +159,27 @@ class SuperDraw(Star):
                 chain.file_image(filePath)
         return chain
 
-
     async def _extractImages(self, event: AstrMessageEvent) -> list[bytes]:
-        """从消息中提取所有参考图：图片组件、回复链、@头像、合并转发。"""
+        """
+        从消息中提取所有参考图：消息图片、回复链、@头像、合并转发。
+        特殊：消息开头的第一个 @ 通常是用来呼叫 bot 或指明对象，不计入参考图；
+        其他位置的 @（包括 bot 自己）都把对方头像作为参考图。
+        """
         if not event.message_obj or not event.message_obj.message:
             return []
 
+        components = event.message_obj.message
         pictures: list[bytes] = []
-        for component in event.message_obj.message:
+
+        for index, component in enumerate(components):
             try:
+                # 第一位上的 @ 视为命令前缀，跳过；从第二位起的 @ 才取头像
+                if index == 0 and isinstance(component, Comp.At):
+                    continue
                 pictures.extend(await self._extractImagesFromComponent(component))
             except Exception as exc:
                 logger.error(f"[SuperDraw] 提取参考图失败：{exc}")
         return pictures
-
 
     async def _extractImagesFromComponent(self, component: Any) -> list[bytes]:
         """从单个 AstrBot 消息组件里提取图片字节。"""
@@ -189,46 +190,49 @@ class SuperDraw(Star):
         if isinstance(component, Comp.Reply) and component.chain:
             return await self._extractImagesFromChain(component.chain)
 
-        if isinstance(component, Comp.At) and hasattr(component, "qq") and component.qq != "all":
+        # @某人就把对方头像作为参考图，不区分是 bot 还是别人；@all 跳过
+        if isinstance(component, Comp.At) and str(getattr(component, "qq", "")) not in ("", "all"):
             image = await self._downloadAvatar(str(component.qq))
             return [image] if image else []
 
-        if hasattr(component, "type") and getattr(component, "type", "") == "forward":
+        # 合并转发：Nodes 是节点容器，Node 是单条节点；都递归提取里面的图片
+        if isinstance(component, (Comp.Nodes, Comp.Node)):
             return await self._extractImagesFromForward(component)
 
         return []
 
-
     async def _extractImagesFromChain(self, chain: list[Any]) -> list[bytes]:
-        """从回复链或普通消息链里提取图片组件。"""
+        """从子消息链中递归提取所有图片（包括嵌套的合并转发、@头像）。"""
         pictures: list[bytes] = []
         for item in chain:
-            if isinstance(item, Comp.Image):
-                image = await self._downloadImage(item.url or item.file)
-                if image:
-                    pictures.append(image)
+            pictures.extend(await self._extractImagesFromComponent(item))
         return pictures
-
 
     async def _extractImagesFromForward(self, component: Any) -> list[bytes]:
-        """从合并转发消息中提取图片，兼容 content 和 nodes 两种字段。"""
+        """从合并转发消息（Nodes 或 Node）中递归提取所有图片。"""
         pictures: list[bytes] = []
-        nodes = getattr(component, "content", None) or getattr(component, "nodes", None) or []
-        for node in nodes:
-            chain = getattr(node, "chain", None) or getattr(node, "message", None) or []
-            pictures.extend(await self._extractImagesFromChain(chain))
+        # Nodes: 含 nodes 字段（list[Node]）；Node: 含 content 字段（消息组件列表）
+        if isinstance(component, Comp.Nodes):
+            for node in component.nodes:
+                pictures.extend(await self._extractImagesFromForward(node))
+        elif isinstance(component, Comp.Node):
+            pictures.extend(await self._extractImagesFromChain(component.content or []))
         return pictures
 
-
     async def _downloadImage(self, urlOrPath: str | None) -> bytes | None:
-        """下载网络图片或读取本地文件，超过配置大小限制返回 None。"""
+        """下载网络图片或读取本地文件，识别不出来时不抛错只返回 None。"""
         if not urlOrPath:
             return None
 
         try:
-            path = Path(urlOrPath)
-            if path.exists() and path.is_file():
-                data = path.read_bytes()
+            # 优先按本地路径处理，避免 http URL 在 Windows 被错误地拼成 Path
+            isHTTP = urlOrPath.startswith(("http://", "https://"))
+            if not isHTTP:
+                path = Path(urlOrPath)
+                if path.exists() and path.is_file():
+                    data = path.read_bytes()
+                else:
+                    data = b""
             else:
                 fileName = f"ref_{hashlib.md5(urlOrPath.encode()).hexdigest()[:10]}"
                 downloaded = await download_image_by_url(urlOrPath, path=str(self.cacheDir / fileName))
@@ -236,26 +240,21 @@ class SuperDraw(Star):
 
             if not data:
                 return None
-            if len(data) > self.data.maxImageSizeMB * 1024 * 1024:
-                logger.info(f"[SuperDraw] 参考图超过 {self.data.maxImageSizeMB}MB，已忽略。")
-                return None
 
-            # 这里调用 detectMimeType 是为了确认它确实像图片；未知格式也交给模型尝试
+            # 确认是图片格式
             detectMimeType(data)
             return data
         except Exception as exc:
             logger.error(f"[SuperDraw] 获取图片失败 ({urlOrPath})：{exc}")
             return None
 
-
     async def _downloadAvatar(self, userID: str) -> bytes | None:
         """下载 QQ 头像作为参考图。"""
         url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={userID}&spec=640"
         return await self._downloadImage(url)
 
-
     async def _cleanCacheLoop(self) -> None:
-        """定时清理缓存目录，插件启动时先清一次，之后按配置间隔清理。"""
+        """定时清理缓存目录，插件启动时先清一次，之后每 24 小时清理一次。"""
         while True:
             try:
                 deletedCount = await cleanCache(self.cacheDir, self.data.maxCacheCount)
@@ -268,7 +267,6 @@ class SuperDraw(Star):
                 logger.error(f"[SuperDraw] 清理缓存失败：{exc}")
                 await asyncio.sleep(60)
 
-
     def _startBackground(self, coro, name: str) -> asyncio.Task:
         """启动后台任务并记录下来，插件卸载时可以统一取消。"""
         task = asyncio.create_task(coro)
@@ -277,17 +275,14 @@ class SuperDraw(Star):
         task.add_done_callback(self.backgroundTasks.discard)
         return task
 
-
     def _readCommandText(self, messageText: str) -> str:
         """取出命令后面的正文，例如 '/生图 一只猫' 得到 '一只猫'。"""
         parts = messageText.strip().split(maxsplit=1)
         return parts[1].strip() if len(parts) > 1 else ""
 
-
     def _createTaskID(self, seed: str) -> str:
         """用当前时间和用户 ID 生成 8 位任务 ID，方便用户识别任务。"""
         return hashlib.md5(f"{time.time()}{seed}".encode()).hexdigest()[:8]
-
 
     def _formatStartMessage(self, taskID: str, images: list[bytes], presetName: str | None) -> str:
         """生成任务开始提示文字。"""
@@ -298,18 +293,12 @@ class SuperDraw(Star):
             parts.append(f"预设：{presetName}")
         return "，".join(parts)
 
-
     def _formatSuccessInfo(self, chatID: str, imageCount: int, duration: float) -> str:
-        """生成成功后附加的说明文字，受配置开关控制。"""
+        """生成成功后附加的说明文字。"""
         lines: list[str] = []
-        if self.data.showInfo:
-            lines.append(f"生成成功\n耗时：{duration:.2f}s\n数量：{imageCount}张")
-        if self.data.showModel:
-            lines.append(f"模型：{self.data.model}")
         if self.data.enableDailyLimit:
             lines.append(f"今日用量：{self.data.getUserUsageCount(chatID)}/{self.data.dailyLimitCount}")
         return "\n".join(lines)
-
 
     def _formatPresetList(self) -> str:
         """把预设字典格式化成聊天消息。"""
@@ -320,7 +309,6 @@ class SuperDraw(Star):
             shortPrompt = prompt[:20] + "..." if len(prompt) > 20 else prompt
             lines.append(f"{index}. {name}: {shortPrompt}")
         return "\n".join(lines)
-
 
     def _addPresetByText(self, text: str) -> str:
         """解析 '名称:内容' 并保存预设。"""
@@ -333,7 +321,6 @@ class SuperDraw(Star):
 
         self.data.addPreset(name.strip(), prompt.strip())
         return f"预设已添加：{name.strip()}"
-
 
     def _removePresetByName(self, name: str) -> str:
         """按名称删除预设。"""
@@ -353,7 +340,7 @@ class ImageTool(FunctionTool[AstrAgentContext]):
     """
 
     name: str = "generate_image"
-    description: str = "生成或修改图片"
+    description: str = "使用生图模型生成或修改图片。支持从消息图片、回复链、@头像、合并转发、URL、本地文件获取参考图。"
     parameters: dict = Field(
         default_factory=lambda: {
             "type": "object",
@@ -361,12 +348,14 @@ class ImageTool(FunctionTool[AstrAgentContext]):
                 "prompt": {"type": "string", "description": "生图提示词，保留用户真实意图。"},
                 "aspectRatio": {"type": "string", "enum": ["auto", "1:1", "2:3", "3:2", "9:16", "16:9"], "default": "auto"},
                 "quality": {"type": "string", "enum": ["low", "medium", "high", "auto"], "default": "auto"},
+                "imageUrls": {"type": "array", "items": {"type": "string"}, "description": "图片 URL 列表，作为参考图。"},
+                "imagePaths": {"type": "array", "items": {"type": "string"}, "description": "本地图片文件路径列表，作为参考图。"},
             },
             "required": ["prompt"],
         }
     )
+    is_background_task: bool = True  # 立刻返回任务文本，真正生图在后台跑
     plugin: Any = None
-
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolExecResult:
         """LLM 调用工具时进入这里，启动后台生图并立即返回文字反馈。"""
@@ -384,15 +373,44 @@ class ImageTool(FunctionTool[AstrAgentContext]):
         if reason:
             return reason
 
+        # 从工具参数获取图片
+        images = await self._getImagesFromToolParams(kwargs)
+        # 从消息上下文提取图片（消息中的图片、回复链、@头像、合并转发）
+        contextImages = await self.plugin._extractImages(event)
+        images.extend(contextImages)
+
         size = PluginData.mapAspectRatio(str(kwargs.get("aspectRatio", "auto")))
         quality = str(kwargs.get("quality", "auto"))
-        images = await self.plugin._extractImages(event)
+
         self.plugin._startBackground(
             self.plugin._generateAndSend(event.unified_msg_origin, prompt, images, size, quality),
             f"llm_generate_{self.plugin._createTaskID(event.unified_msg_origin)}",
         )
         return f"已启动{'图生图' if images else '文生图'}任务。"
 
+    async def _getImagesFromToolParams(self, kwargs: dict[str, Any]) -> list[bytes]:
+        """从工具参数中获取图片（URL 和本地路径）。"""
+        images: list[bytes] = []
+
+        # 处理图片 URL
+        imageUrls = kwargs.get("imageUrls", [])
+        if isinstance(imageUrls, list):
+            for url in imageUrls:
+                if isinstance(url, str):
+                    img = await self.plugin._downloadImage(url)
+                    if img:
+                        images.append(img)
+
+        # 处理本地文件路径
+        imagePaths = kwargs.get("imagePaths", [])
+        if isinstance(imagePaths, list):
+            for path in imagePaths:
+                if isinstance(path, str):
+                    img = await self.plugin._downloadImage(path)
+                    if img:
+                        images.append(img)
+
+        return images
 
     def _readEvent(self, context: ContextWrapper[AstrAgentContext]) -> Any:
         """从 LLM 工具上下文里取当前消息事件。"""
