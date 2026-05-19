@@ -7,3 +7,5 @@ plans/
 testOutput/
 AGENTS.md
 plan.md
+uv.lock
+test_output/
