@@ -1,7 +1,9 @@
 # yaml-language-server: $schema=https://json-schema.org/draft-07/schema#
 name: astrbot_plugin_super_draw
 display_name: 超级生图
-desc: 超级生图插件，支持多种生图
-version: v1.0.0
+short_desc: 基于 OpenAI 兼容接口的图片生成插件
+desc: 超级生图插件，支持文生图和图生图，支持从消息、回复链、@头像、合并转发中提取参考图，支持预设提示词模板。
+version: v1.0.1
 author: Kernyr
+repo: https://github.com/Kernyr/astrbot_plugin_super_draw
 astrbot_version: ">=4.20.1"

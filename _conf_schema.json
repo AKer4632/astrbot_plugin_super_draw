@@ -1,38 +1,32 @@
 {
   "enable_llm_tool": {
     "description": "启用 LLM 工具",
-    "hint": "启用后,LLM 可以在对话中自动调用图像生成功能",
+    "hint": "启用后，LLM 可以在对话中自动调用图像生成功能",
     "type": "bool",
     "default": true
   },
   "api": {
     "description": "API 配置",
-    "hint": "OpenAI 兼容格式的图片生成接口配置，支持任何提供 OpenAI 兼容 API 的中转站",
+    "hint": "OpenAI 兼容格式的图片生成接口配置",
     "type": "object",
     "items": {
       "base_url": {
         "description": "API Base URL",
-        "hint": "OpenAI 兼容接口地址，例如 https://api.openai.com 或中转站地址",
+        "hint": "OpenAI 兼容接口地址，留空使用默认地址",
         "type": "string",
         "default": ""
       },
       "api_keys": {
         "description": "API Keys",
-        "hint": "支持多个 Key 轮换使用",
+        "hint": "支持多个 Key 轮换使用。格式：每行一个 Key",
         "type": "list",
         "default": []
       },
       "model": {
         "description": "模型名称",
-        "hint": "例如 gpt-image-2、gpt-image-1 等，取决于中转站支持的模型",
+        "hint": "例如 gpt-image-2、gpt-image-1",
         "type": "string",
         "default": "gpt-image-2"
-      },
-      "proxy": {
-        "description": "代理地址",
-        "hint": "例如: http://127.0.0.1:7890",
-        "type": "string",
-        "default": ""
       }
     }
   },
@@ -41,18 +35,9 @@
     "hint": "图像生成的行为配置",
     "type": "object",
     "items": {
-      "timeout": {
-        "description": "生图超时时间（秒）",
-        "type": "int",
-        "slider": {
-          "min": 60,
-          "max": 600,
-          "step": 10
-        },
-        "default": 180
-      },
       "max_retry_attempts": {
         "description": "最大重试次数",
+        "hint": "生图失败时的重试次数",
         "type": "int",
         "slider": {
           "min": 0,
@@ -72,42 +57,27 @@
         },
         "default": 3
       },
-      "default_aspect_ratio": {
-        "description": "默认宽高比",
-        "hint": "选择自动时由模型自行决定",
-        "type": "string",
-        "default": "自动",
-        "options": ["自动", "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
-      },
       "default_resolution": {
         "description": "默认分辨率",
         "hint": "图片质量等级",
         "type": "string",
-        "default": "1K",
-        "options": ["1K", "2K", "4K"]
-      },
-      "show_generation_info": {
-        "description": "显示生图信息",
-        "hint": "生图成功后展示耗时和数量",
-        "type": "bool",
-        "default": false
-      },
-      "show_model_info": {
-        "description": "显示模型信息",
-        "hint": "生图成功后展示模型名称",
-        "type": "bool",
-        "default": false
+        "default": "2K",
+        "options": [
+          "1K",
+          "2K",
+          "4K"
+        ]
       }
     }
   },
   "user_limits": {
     "description": "用户限制配置",
-    "hint": "针对用户的生图限制",
+    "hint": "针对用户的生图频率和数量限制",
     "type": "object",
     "items": {
       "rate_limit_seconds": {
         "description": "速率限制（秒）",
-        "hint": "单个用户两次请求之间的最小间隔,0 表示不限制",
+        "hint": "单个用户两次生图请求之间的最小间隔，0 表示不限制",
         "type": "int",
         "slider": {
           "min": 0,
@@ -116,24 +86,15 @@
         },
         "default": 0
       },
-      "max_image_size_mb": {
-        "description": "最大图片限制 (MB)",
-        "hint": "参考图最大大小,超过将被忽略",
-        "type": "int",
-        "slider": {
-          "min": 1,
-          "max": 30,
-          "step": 1
-        },
-        "default": 10
-      },
       "enable_daily_limit": {
         "description": "启用每日生图数量限制",
+        "hint": "限制每个用户每天的生图次数",
         "type": "bool",
         "default": false
       },
       "daily_limit_count": {
-        "description": "每日生图数量限制次数",
+        "description": "每日生图数量限制",
+        "hint": "每个用户每天最多生成的图片数量",
         "type": "int",
         "slider": {
           "min": 1,
@@ -144,41 +105,14 @@
       }
     }
   },
-  "cache": {
-    "description": "缓存配置",
-    "hint": "图片缓存管理配置",
-    "type": "object",
-    "items": {
-      "max_cache_count": {
-        "description": "最大缓存图片数量",
-        "type": "int",
-        "slider": {
-          "min": 10,
-          "max": 200,
-          "step": 1
-        },
-        "default": 100
-      },
-      "cleanup_interval_hours": {
-        "description": "定时清理间隔 (小时)",
-        "type": "int",
-        "slider": {
-          "min": 1,
-          "max": 24,
-          "step": 1
-        },
-        "default": 24
-      }
-    }
-  },
   "presets": {
     "description": "预设提示词",
-    "hint": "预定义的图片生成提示词模板。格式: '名称:提示词'",
+    "hint": "预定义的图片生成提示词模板。格式: '预设名称:提示词内容'",
     "type": "list",
     "default": [
       "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character.",
       "绘画四宫格:Step 1: line drawing. Step 2: tile colors. Step 3: Add Shadows. Step 4: Refine and shape. No words",
-      "表情包:{\"prompt\": \"为我生成图中角色的 Q 版 LINE 风格半身像表情包,4x6 布局,涵盖常用聊天语句\", \"aspect_ratio\": \"16:9\", \"resolution\": \"2K\"}"
+      "表情包:为我生成图中角色的 Q 版 LINE 风格半身像表情包，4x6 布局，涵盖常用聊天语句"
     ]
   }
 }
