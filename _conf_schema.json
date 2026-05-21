@@ -57,15 +57,15 @@
         },
         "default": 3
       },
-      "default_resolution": {
-        "description": "默认分辨率",
-        "hint": "图片质量等级",
+      "default_quality": {
+        "description": "默认质量",
+        "hint": "图片质量等级，low 省钱快速，medium 平衡，high 最清晰",
         "type": "string",
-        "default": "2K",
+        "default": "medium",
         "options": [
-          "1K",
-          "2K",
-          "4K"
+          "low",
+          "medium",
+          "high"
         ]
       }
     }

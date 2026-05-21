@@ -38,7 +38,6 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from .data import PluginData
 from .generate import ImageGenerator
 from .tool.file import cleanCache, saveImage
-from .tool.picture import detectMimeType
 
 
 class SuperDraw(Star):
@@ -57,7 +56,6 @@ class SuperDraw(Star):
             apiKeys=self.data.apiKeys,
             baseURL=self.data.baseURL,
             model=self.data.model,
-            proxy=self.data.proxy,
             timeout=self.data.timeout,
             maxRetry=self.data.maxRetry,
         )
@@ -107,10 +105,18 @@ class SuperDraw(Star):
             return
 
         images = await self._extractImages(event)
-        taskID = self._createTaskID(userID)
-        yield event.plain_result(self._formatStartMessage(taskID, images, presetName))
+        taskID = hashlib.md5(f"{time.time()}{userID}".encode()).hexdigest()[:8]
+
+        # 拼接任务开始提示
+        startParts = [f"已开始生图任务，任务ID：{taskID}"]
+        if images:
+            startParts.append(f"参考图：{len(images)}张")
+        if presetName:
+            startParts.append(f"预设：{presetName}")
+        yield event.plain_result("，".join(startParts))
+
         self._startBackground(
-            self._generateAndSend(userID, prompt, images, self.data.defaultSize, self.data.defaultQuality),
+            self._generateAndSend(userID, prompt, images, "auto", self.data.defaultQuality),
             f"generate_{taskID}",
         )
 
@@ -220,7 +226,7 @@ class SuperDraw(Star):
         return pictures
 
     async def _downloadImage(self, urlOrPath: str | None) -> bytes | None:
-        """下载网络图片或读取本地文件，识别不出来时不抛错只返回 None。"""
+        """下载网络图片或读取本地文件，失败时不抛错只返回 None。"""
         if not urlOrPath:
             return None
 
@@ -238,12 +244,7 @@ class SuperDraw(Star):
                 downloaded = await download_image_by_url(urlOrPath, path=str(self.cacheDir / fileName))
                 data = Path(downloaded).read_bytes() if downloaded else b""
 
-            if not data:
-                return None
-
-            # 确认是图片格式
-            detectMimeType(data)
-            return data
+            return data or None
         except Exception as exc:
             logger.error(f"[SuperDraw] 获取图片失败 ({urlOrPath})：{exc}")
             return None
@@ -279,19 +280,6 @@ class SuperDraw(Star):
         """取出命令后面的正文，例如 '/生图 一只猫' 得到 '一只猫'。"""
         parts = messageText.strip().split(maxsplit=1)
         return parts[1].strip() if len(parts) > 1 else ""
-
-    def _createTaskID(self, seed: str) -> str:
-        """用当前时间和用户 ID 生成 8 位任务 ID，方便用户识别任务。"""
-        return hashlib.md5(f"{time.time()}{seed}".encode()).hexdigest()[:8]
-
-    def _formatStartMessage(self, taskID: str, images: list[bytes], presetName: str | None) -> str:
-        """生成任务开始提示文字。"""
-        parts = [f"已开始生图任务，任务ID：{taskID}"]
-        if images:
-            parts.append(f"参考图：{len(images)}张")
-        if presetName:
-            parts.append(f"预设：{presetName}")
-        return "，".join(parts)
 
     def _formatSuccessInfo(self, chatID: str, imageCount: int, duration: float) -> str:
         """生成成功后附加的说明文字。"""
@@ -384,7 +372,7 @@ class ImageTool(FunctionTool[AstrAgentContext]):
 
         self.plugin._startBackground(
             self.plugin._generateAndSend(event.unified_msg_origin, prompt, images, size, quality),
-            f"llm_generate_{self.plugin._createTaskID(event.unified_msg_origin)}",
+            f"llm_generate_{hashlib.md5(f'{time.time()}{event.unified_msg_origin}'.encode()).hexdigest()[:8]}",
         )
         return f"已启动{'图生图' if images else '文生图'}任务，正在生成中。图片生成完成后，系统会自动将结果发送到聊天窗口."
 

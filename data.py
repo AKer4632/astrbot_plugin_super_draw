@@ -11,7 +11,6 @@ data.recordUsage("user_123")
 prompt, presetName = data.resolvePreset("手办化 加个透明盒子")
 data.addPreset("手办化", "高质量手办照片")
 size = PluginData.mapAspectRatio("16:9")
-quality = PluginData.mapResolution("2K")
 """
 
 from __future__ import annotations
@@ -41,14 +40,12 @@ class PluginData:
         self.apiKeys: list[str] = []  # API Key 列表
         self.baseURL: str = ""  # API 基础地址
         self.model: str = "gpt-image-2"  # 模型名
-        self.proxy: str | None = None  # HTTP 代理（保留但不展示配置）
         self.timeout: int = 180  # 请求超时秒数（保留但不展示配置）
         self.maxRetry: int = 3  # 最大重试次数
         self.maxConcurrent: int = 3  # 最大并发任务数
 
         # ─── 生图默认值 ───
-        self.defaultSize: str = "auto"  # 映射后的 OpenAI size 值（永远 auto）
-        self.defaultQuality: str = "medium"  # 映射后的 OpenAI quality 值（默认 2K）
+        self.defaultQuality: str = "medium"  # OpenAI quality 值（low/medium/high）
 
         # ─── 用户限制 ───
         self.rateLimitSeconds: int = 0  # 两次请求最小间隔秒数
@@ -178,12 +175,6 @@ class PluginData:
         }
         return sizeMap.get(ratio, "auto")
 
-    @staticmethod
-    def mapResolution(resolution: str) -> str:
-        """把 "1K"、"2K"、"4K" 映射成 OpenAI quality 参数。"""
-        qualityMap = {"1K": "low", "2K": "medium", "4K": "high"}
-        return qualityMap.get(resolution, "medium")  # 默认 medium（对应 2K）
-
     # ═══════════════════════════════════════════════════════════════════════════
     # 内部方法
     # ═══════════════════════════════════════════════════════════════════════════
@@ -201,9 +192,8 @@ class PluginData:
         self.maxRetry = gen.get("max_retry_attempts", 3)
         self.maxConcurrent = max(1, gen.get("max_concurrent_tasks", 3))
 
-        # 默认分辨率映射（宽高比永远自动）
-        rawResolution = gen.get("default_resolution", "2K")
-        self.defaultQuality = self.mapResolution(rawResolution)
+        # 默认质量（直接使用配置值，不再做映射）
+        self.defaultQuality = gen.get("default_quality", "medium")
 
         # 用户限制
         limits = self.rawConfig.get("user_limits", {})

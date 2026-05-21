@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from data import PluginData
 from generate import ImageGenerator
 
 # 当前插件根目录，.env 和输出文件都按这个目录寻找。
@@ -51,7 +52,6 @@ async def main() -> None:
         apiKeys=settings["apiKeys"],
         baseURL=settings["baseURL"],
         model=settings["model"],
-        proxy=settings["proxy"],
         timeout=settings["timeout"],
         maxRetry=settings["maxRetry"],
     )
@@ -138,14 +138,13 @@ def readSettings(config: dict[str, str]) -> dict:
         "apiKeys": apiKeys,
         "baseURL": requireText(config, "OPENAI_BASE_URL"),
         "model": requireText(config, "OPENAI_MODEL"),
-        "proxy": config.get("OPENAI_PROXY") or None,
         "timeout": readInt(config, "TIMEOUT", 180),
         "maxRetry": readInt(config, "MAX_RETRY", 3),
         "textPrompt": requireText(config, "TEXT_PROMPT"),
         "imagePrompt": requireText(config, "IMAGE_PROMPT"),
         "aspectRatio": aspectRatio,
         "resolution": resolution,
-        "size": mapAspectRatio(aspectRatio),
+        "size": PluginData.mapAspectRatio(aspectRatio),
         "quality": mapResolution(resolution),
     }
 
@@ -177,30 +176,8 @@ def readInt(config: dict[str, str], key: str, default: int) -> int:
     return int(config[key])
 
 
-def mapAspectRatio(ratio: str) -> str:
-    """把 .env 的 ASPECT_RATIO 映射成生图接口需要的 size。"""
-    sizeMap = {
-        "auto": "auto",
-        "自动": "auto",
-        "1:1": "1024x1024",
-        "3:2": "1536x1024",
-        "16:9": "1536x1024",
-        "4:3": "1536x1024",
-        "5:4": "1536x1024",
-        "21:9": "1536x1024",
-        "2:3": "1024x1536",
-        "9:16": "1024x1536",
-        "3:4": "1024x1536",
-        "4:5": "1024x1536",
-        "1024x1024": "1024x1024",
-        "1536x1024": "1536x1024",
-        "1024x1536": "1024x1536",
-    }
-    return sizeMap.get(ratio, ratio)
-
-
 def mapResolution(resolution: str) -> str:
-    """把 .env 的 RESOLUTION 映射成生图接口需要的 quality。"""
+    """把 .env 的 RESOLUTION 映射成生图接口需要的 quality（兼容 1K/2K/4K 旧写法）。"""
     qualityMap = {
         "auto": "auto",
         "自动": "auto",
