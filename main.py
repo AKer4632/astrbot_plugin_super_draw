@@ -159,15 +159,10 @@ class SuperDraw(Star):
     async def _generateAndSend(self, chatID: str, prompt: str, images: list[bytes], size: str, quality: str) -> None:
         """后台执行生图并发送结果；成功记录用量，失败发错误消息。"""
         async with self.semaphore:
-            startTime = time.time()
             try:
                 resultImages = await self.generator.generate(prompt, images, size, quality)
-                duration = time.time() - startTime
                 self.data.recordUsage(chatID)
                 chain = self._buildImageChain(resultImages)
-                info = self._formatSuccessInfo(chatID, len(resultImages), duration)
-                if info:
-                    chain.message("\n" + info)
                 await self.context.send_message(chatID, chain)
             except Exception as exc:
                 logger.error(f"[SuperDraw] 生成失败：{exc}")
@@ -297,15 +292,6 @@ class SuperDraw(Star):
         """取出命令后面的正文，例如 '/生图 一只猫' 得到 '一只猫'。"""
         parts = messageText.strip().split(maxsplit=1)
         return parts[1].strip() if len(parts) > 1 else ""
-
-    def _formatSuccessInfo(self, chatID: str, imageCount: int, duration: float) -> str:
-        """生成成功后附加的说明文字。"""
-        lines: list[str] = []
-        if self.data.currentModelKey:
-            lines.append(f"模型：{self.data.currentModelKey}")
-        if self.data.enableDailyLimit:
-            lines.append(f"今日用量：{self.data.getUserUsageCount(chatID)}/{self.data.dailyLimitCount}")
-        return "\n".join(lines)
 
     def _formatPresetList(self) -> str:
         """把预设字典格式化成聊天消息。"""
