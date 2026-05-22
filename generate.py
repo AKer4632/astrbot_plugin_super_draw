@@ -75,6 +75,17 @@ class ImageGenerator:
 
         raise RuntimeError(f"重试 {self.maxRetry} 次后失败: {lastError}")
 
+    async def setConfig(self, apiKeys: list[str], baseURL: str, model: str) -> None:
+        """
+        切换生图供应商和模型。
+        先关闭旧客户端，再换成新的 API Key、接口地址和模型名，下一次生图会自动创建新客户端。
+        """
+        await self.close()
+        self.apiKeys = apiKeys
+        self.baseURL = (baseURL or "https://api.openai.com").rstrip("/")
+        self.model = model or "gpt-image-2"
+        self.currentKeyIndex = 0
+
     async def close(self):
         """关闭 HTTP 客户端，释放连接池。"""
         if self._client:

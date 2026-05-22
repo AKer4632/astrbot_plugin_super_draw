@@ -1,8 +1,8 @@
 """
-插件的数据层：配置读取、用户用量、预设管理。
+插件的数据层：配置读取、用户用量、预设管理、生图模型切换。
 
-从 AstrBot 配置读取 API 设置和生图参数，管理用户每日用量和预设提示词。
-它只做数据存取，不做生图业务逻辑，也不发消息。
+从 AstrBot 配置读取多个生图供应商，每个供应商可以配置多个模型。
+这个文件只保存和整理数据，不直接生图、不发消息；main.py 负责接收指令，generate.py 负责调用接口。
 
 调用示例：
 data = PluginData(config, dataDir)
@@ -11,6 +11,8 @@ data.recordUsage("user_123")
 prompt, presetName = data.resolvePreset("手办化 加个透明盒子")
 data.addPreset("手办化", "高质量手办照片")
 size = PluginData.mapAspectRatio("16:9")
+modelListText = data.formatModelList()
+switchText = data.switchModel(1)
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import datetime
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +28,23 @@ from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
 
+@dataclass
+class ImageProvider:
+    """
+    一个生图供应商的配置。
+    name 是给人看的供应商名，baseURL/apiKeys/model 是真正传给生图接口的数据。
+    """
+
+    name: str
+    baseURL: str
+    apiKeys: list[str]
+    availableModels: list[str]
+
+
 class PluginData:
     """
     插件数据入口。
-    把 AstrBot 原始配置变成清晰的属性，管理用量和预设的读写。
+    把 AstrBot 原始配置变成清晰的属性，管理用量、预设、当前生图供应商和当前模型。
     """
 
     def __init__(self, config: AstrBotConfig, dataDir: Path):
@@ -36,11 +52,15 @@ class PluginData:
         self.dataDir = dataDir  # 插件数据目录
         self.usageFile = dataDir / "usage.json"  # 用户每日用量文件
 
-        # ─── API 配置 ───
-        self.apiKeys: list[str] = []  # API Key 列表
-        self.baseURL: str = ""  # API 基础地址
-        self.model: str = "gpt-image-2"  # 模型名
-        self.timeout: int = 180  # 请求超时秒数（保留但不展示配置）
+        # ─── API 供应商配置 ───
+        self.providers: list[ImageProvider] = []  # 所有可用供应商
+        self.availableModels: list[dict[str, str]] = []  # 展平后的模型列表，方便 /生图模型 按数字切换
+        self.currentModelKey: str = ""  # 当前模型完整名，格式：供应商/模型
+        self.currentProvider: ImageProvider | None = None  # 当前使用的供应商
+        self.apiKeys: list[str] = []  # 当前供应商 API Key 列表
+        self.baseURL: str = ""  # 当前供应商 API 基础地址
+        self.model: str = "gpt-image-2"  # 当前模型名
+        self.timeout: int = 180  # 请求超时秒数（固定值，不展示配置）
         self.maxRetry: int = 3  # 最大重试次数
         self.maxConcurrent: int = 3  # 最大并发任务数
 
@@ -109,6 +129,37 @@ class PluginData:
         return self.usageCountByDate.get(today, {}).get(userID, 0)
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # 生图模型切换
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def formatModelList(self) -> str:
+        """返回可用生图模型列表；/生图模型 不带数字时直接发给用户。"""
+        if not self.availableModels:
+            return "当前没有可用生图模型，请先在插件配置里添加供应商、API Key 和模型。"
+
+        lines = ["可用生图模型："]
+        for index, item in enumerate(self.availableModels, 1):
+            marker = " ✅" if item["key"] == self.currentModelKey else ""
+            lines.append(f"{index}. {item['key']}{marker}")
+        lines.append("\n发送 /生图模型 数字 可切换供应商和模型，例如：/生图模型 1")
+        return "\n".join(lines)
+
+    def switchModel(self, index: int) -> str:
+        """按列表数字切换当前供应商和模型，同时写回 AstrBot 配置。"""
+        if index < 1 or index > len(self.availableModels):
+            return f"模型编号不存在，请发送 /生图模型 查看 1 到 {len(self.availableModels)} 的可选模型。"
+
+        item = self.availableModels[index - 1]
+        self._applyModelKey(item["key"])
+
+        generation = self.rawConfig.get("generation", {})
+        generation["model"] = self.currentModelKey
+        self.rawConfig["generation"] = generation
+        self.rawConfig.save_config()
+
+        return f"已切换生图模型：{self.currentModelKey}"
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # 预设管理
     # ═══════════════════════════════════════════════════════════════════════════
 
@@ -152,7 +203,7 @@ class PluginData:
         return True
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # 尺寸/质量映射（静态方法，供 main.py 和 LLM 工具调用）
+    # 尺寸映射（静态方法，供 main.py、LLM 工具和 test.py 调用）
     # ═══════════════════════════════════════════════════════════════════════════
 
     @staticmethod
@@ -162,6 +213,8 @@ class PluginData:
         横向比例映射到 1536x1024，纵向比例映射到 1024x1536。
         """
         sizeMap = {
+            "auto": "auto",
+            "自动": "auto",
             "1:1": "1024x1024",
             "3:2": "1536x1024",  # 横向
             "16:9": "1536x1024",  # 横向
@@ -172,6 +225,9 @@ class PluginData:
             "9:16": "1024x1536",  # 纵向
             "3:4": "1024x1536",  # 纵向
             "4:5": "1024x1536",  # 纵向
+            "1024x1024": "1024x1024",
+            "1536x1024": "1536x1024",
+            "1024x1536": "1024x1536",
         }
         return sizeMap.get(ratio, "auto")
 
@@ -181,19 +237,17 @@ class PluginData:
 
     def _loadConfig(self) -> None:
         """从 AstrBot 配置读取全部设置。"""
-        # API 配置
-        api = self.rawConfig.get("api", {})
-        self.apiKeys = [k for k in api.get("api_keys", []) if k]
-        self.baseURL = self._cleanBaseURL((api.get("base_url") or "").strip())
-        self.model = api.get("model", "gpt-image-2") or "gpt-image-2"
+        self.providers = self._parseProviders(self.rawConfig.get("api_providers", []))
+        if not self.providers:
+            self.providers = self._parseOldSingleProvider(self.rawConfig.get("api", {}))
+        self.availableModels = self._buildAvailableModels()
 
         # 生图配置
         gen = self.rawConfig.get("generation", {})
         self.maxRetry = gen.get("max_retry_attempts", 3)
         self.maxConcurrent = max(1, gen.get("max_concurrent_tasks", 3))
-
-        # 默认质量（直接使用配置值，不再做映射）
         self.defaultQuality = gen.get("default_quality", "medium")
+        self._applyModelKey(gen.get("model", ""))
 
         # 用户限制
         limits = self.rawConfig.get("user_limits", {})
@@ -206,6 +260,77 @@ class PluginData:
 
         # 预设
         self.presets = self._parsePresets(self.rawConfig.get("presets", []))
+
+    def _parseProviders(self, rawProviders: Any) -> list[ImageProvider]:
+        """把 template_list 的供应商配置整理成 ImageProvider 列表。"""
+        providers: list[ImageProvider] = []
+        if not isinstance(rawProviders, list):
+            return providers
+
+        for index, rawProvider in enumerate(rawProviders, 1):
+            if not isinstance(rawProvider, dict):
+                continue
+
+            name = str(rawProvider.get("name") or f"供应商{index}").strip()
+            baseURL = self._cleanBaseURL(str(rawProvider.get("base_url") or ""))
+            apiKeys = [key for key in rawProvider.get("api_keys", []) if key]
+            models = [str(model).strip() for model in rawProvider.get("available_models", []) if str(model).strip()]
+
+            if apiKeys and models:
+                providers.append(ImageProvider(name=name, baseURL=baseURL, apiKeys=apiKeys, availableModels=models))
+        return providers
+
+    def _parseOldSingleProvider(self, api: Any) -> list[ImageProvider]:
+        """兼容旧版 api 单供应商配置，避免老用户升级后立刻不可用。"""
+        if not isinstance(api, dict):
+            return []
+
+        apiKeys = [key for key in api.get("api_keys", []) if key]
+        model = api.get("model", "gpt-image-2") or "gpt-image-2"
+        if not apiKeys:
+            return []
+
+        return [
+            ImageProvider(
+                name="OpenAI",
+                baseURL=self._cleanBaseURL((api.get("base_url") or "").strip()),
+                apiKeys=apiKeys,
+                availableModels=[model],
+            )
+        ]
+
+    def _buildAvailableModels(self) -> list[dict[str, str]]:
+        """把多个供应商的多个模型展平成一个列表，方便用数字选择。"""
+        result: list[dict[str, str]] = []
+        for provider in self.providers:
+            for model in provider.availableModels:
+                result.append({"key": f"{provider.name}/{model}", "provider": provider.name, "model": model})
+        return result
+
+    def _applyModelKey(self, modelKey: str) -> None:
+        """根据 '供应商/模型' 设置当前供应商和当前模型；空值或无效值时使用第一个可用模型。"""
+        target = modelKey or (self.availableModels[0]["key"] if self.availableModels else "")
+        matched = next((item for item in self.availableModels if item["key"] == target), None)
+        if not matched and self.availableModels:
+            matched = self.availableModels[0]
+
+        if not matched:
+            self.currentModelKey = ""
+            self.currentProvider = None
+            self.apiKeys = []
+            self.baseURL = ""
+            self.model = "gpt-image-2"
+            return
+
+        provider = next((item for item in self.providers if item.name == matched["provider"]), None)
+        if not provider:
+            return
+
+        self.currentModelKey = matched["key"]
+        self.currentProvider = provider
+        self.apiKeys = provider.apiKeys
+        self.baseURL = provider.baseURL
+        self.model = matched["model"]
 
     def _loadUsage(self) -> None:
         """读取 usage.json；文件不存在就从空数据开始。"""

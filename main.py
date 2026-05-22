@@ -72,7 +72,7 @@ class SuperDraw(Star):
             logger.info("[SuperDraw] 已注册图像生成 LLM 工具。")
 
         self._startBackground(self._cleanCacheLoop(), "cache_cleanup")
-        logger.info(f"[SuperDraw] 插件加载完成，模型：{self.data.model}")
+        logger.info(f"[SuperDraw] 插件加载完成，模型：{self.data.currentModelKey or self.data.model}")
 
     async def terminate(self):
         """插件卸载时取消后台任务并关闭 OpenAI 客户端。"""
@@ -119,6 +119,23 @@ class SuperDraw(Star):
             self._generateAndSend(userID, prompt, images, "auto", self.data.defaultQuality),
             f"generate_{taskID}",
         )
+
+    @filter.command("生图模型")
+    async def cmdModel(self, event: AstrMessageEvent):
+        """用户发送 /生图模型 时进入这里：不带数字显示列表，带数字切换供应商和模型。"""
+        commandText = self._readCommandText(event.message_str or "")
+
+        if not commandText:
+            yield event.plain_result(self.data.formatModelList())
+            return
+
+        if not commandText.isdigit():
+            yield event.plain_result("格式错误：/生图模型 或 /生图模型 数字")
+            return
+
+        result = self.data.switchModel(int(commandText))
+        await self.generator.setConfig(self.data.apiKeys, self.data.baseURL, self.data.model)
+        yield event.plain_result(result)
 
     @filter.command("预设")
     async def cmdPreset(self, event: AstrMessageEvent):
@@ -284,6 +301,8 @@ class SuperDraw(Star):
     def _formatSuccessInfo(self, chatID: str, imageCount: int, duration: float) -> str:
         """生成成功后附加的说明文字。"""
         lines: list[str] = []
+        if self.data.currentModelKey:
+            lines.append(f"模型：{self.data.currentModelKey}")
         if self.data.enableDailyLimit:
             lines.append(f"今日用量：{self.data.getUserUsageCount(chatID)}/{self.data.dailyLimitCount}")
         return "\n".join(lines)

@@ -5,28 +5,42 @@
     "type": "bool",
     "default": true
   },
-  "api": {
-    "description": "API 配置",
-    "hint": "OpenAI 兼容格式的图片生成接口配置",
-    "type": "object",
-    "items": {
-      "base_url": {
-        "description": "API Base URL",
-        "hint": "OpenAI 兼容接口地址，留空使用默认地址",
-        "type": "string",
-        "default": ""
-      },
-      "api_keys": {
-        "description": "API Keys",
-        "hint": "支持多个 Key 轮换使用。格式：每行一个 Key",
-        "type": "list",
-        "default": []
-      },
-      "model": {
-        "description": "模型名称",
-        "hint": "例如 gpt-image-2、gpt-image-1",
-        "type": "string",
-        "default": "gpt-image-2"
+  "api_providers": {
+    "type": "template_list",
+    "description": "API 供应商配置",
+    "hint": "配置多个图像生成 API 供应商，每个供应商可配置多个模型",
+    "templates": {
+      "openai": {
+        "name": "OpenAI 接口",
+        "hint": "使用 OpenAI 兼容的图像生成接口（gpt-image 系列支持图生图，DALL-E 系列仅文生图）",
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于区分不同供应商，生图模型格式为 '供应商名称/模型名称'",
+            "type": "string",
+            "default": ""
+          },
+          "base_url": {
+            "description": "API Base URL",
+            "hint": "OpenAI 兼容接口地址，留空使用默认地址",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API Keys",
+            "hint": "支持多个 Key 轮换使用",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换时的可选模型",
+            "type": "list",
+            "default": [
+              "gpt-image-2"
+            ]
+          }
+        }
       }
     }
   },
@@ -35,6 +49,12 @@
     "hint": "图像生成的行为配置",
     "type": "object",
     "items": {
+      "model": {
+        "description": "当前生图模型",
+        "hint": "格式为 '供应商名称/模型名称'，留空自动使用第一个可用模型。可通过 /生图模型 命令切换",
+        "type": "string",
+        "default": ""
+      },
       "max_retry_attempts": {
         "description": "最大重试次数",
         "hint": "生图失败时的重试次数",
