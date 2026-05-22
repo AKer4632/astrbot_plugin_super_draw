@@ -12,7 +12,7 @@
     "templates": {
       "openai": {
         "name": "OpenAI 接口",
-        "hint": "使用 OpenAI 兼容的图像生成接口（gpt-image 系列支持图生图，DALL-E 系列仅文生图）",
+        "hint": "使用 OpenAI 兼容的图像生成接口，推荐使用 gpt-image 系列模型",
         "items": {
           "name": {
             "description": "供应商名称",
