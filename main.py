@@ -139,11 +139,15 @@ class SuperDraw(Star):
 
     @filter.command("预设")
     async def cmdPreset(self, event: AstrMessageEvent):
-        """用户发送 /预设 时进入这里：展示、添加或删除预设。"""
+        """用户发送 /预设 时进入这里：展示、查看、添加或删除预设。"""
         commandText = self._readCommandText(event.message_str or "")
 
-        if not commandText:
-            yield event.plain_result(self._formatPresetList())
+        if not commandText or commandText.startswith("查看"):
+            detail = commandText[2:].strip() if commandText.startswith("查看") else ""
+            if detail:
+                yield event.plain_result(self.data.getPresetDetail(detail))
+            else:
+                yield event.plain_result(self.data.formatPresetList())
             return
 
         if commandText.startswith("添加 "):
@@ -154,7 +158,7 @@ class SuperDraw(Star):
             yield event.plain_result(self._removePresetByName(commandText[3:]))
             return
 
-        yield event.plain_result("格式错误：/预设、/预设 添加 名称:内容、/预设 删除 名称")
+        yield event.plain_result("格式错误：/预设、/预设 查看、/预设 查看 名称、/预设 添加 名称:内容、/预设 删除 名称")
 
     async def _generateAndSend(self, chatID: str, prompt: str, images: list[bytes], size: str, quality: str) -> None:
         """后台执行生图并发送结果；成功记录用量，失败发错误消息。"""
@@ -292,16 +296,6 @@ class SuperDraw(Star):
         """取出命令后面的正文，例如 '/生图 一只猫' 得到 '一只猫'。"""
         parts = messageText.strip().split(maxsplit=1)
         return parts[1].strip() if len(parts) > 1 else ""
-
-    def _formatPresetList(self) -> str:
-        """把预设字典格式化成聊天消息。"""
-        if not self.data.presets:
-            return "当前没有预设。"
-        lines = ["预设列表："]
-        for index, (name, prompt) in enumerate(self.data.presets.items(), 1):
-            shortPrompt = prompt[:20] + "..." if len(prompt) > 20 else prompt
-            lines.append(f"{index}. {name}: {shortPrompt}")
-        return "\n".join(lines)
 
     def _addPresetByText(self, text: str) -> str:
         """解析 '名称:内容' 并保存预设。"""

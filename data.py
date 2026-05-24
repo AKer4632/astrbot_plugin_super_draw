@@ -144,6 +144,30 @@ class PluginData:
         lines.append("\n发送 /生图模型 数字 可切换供应商和模型，例如：/生图模型 1")
         return "\n".join(lines)
 
+    def formatPresetList(self) -> str:
+        """把预设按编号列出来，方便用户查看每个预设的名字和简短说明。"""
+        if not self.presets:
+            return "当前没有预设。"
+
+        lines = ["预设列表："]
+        for index, (name, prompt) in enumerate(self.presets.items(), 1):
+            shortPrompt = prompt[:20] + "..." if len(prompt) > 20 else prompt
+            lines.append(f"{index}. {name}: {shortPrompt}")
+        lines.append("\n发送 /预设 查看 名称 可查看完整内容，例如：/预设 查看 手办化")
+        return "\n".join(lines)
+
+    def getPresetDetail(self, name: str) -> str:
+        """按名称查看一个预设的完整内容。"""
+        presetName = name.strip()
+        if not presetName:
+            return "请提供要查看的预设名称。"
+
+        matchedName = self._findPreset(presetName)
+        if not matchedName:
+            return f"预设不存在：{presetName}"
+
+        return f"预设：{matchedName}\n\n{self.presets[matchedName]}"
+
     def switchModel(self, index: int) -> str:
         """按列表数字切换当前供应商和模型，同时写回 AstrBot 配置。"""
         if index < 1 or index > len(self.availableModels):
