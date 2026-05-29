@@ -373,7 +373,7 @@ class ImageTool(FunctionTool[AstrAgentContext]):
             self.plugin._generateAndSend(event.unified_msg_origin, prompt, images, size, quality),
             f"llm_generate_{hashlib.md5(f'{time.time()}{event.unified_msg_origin}'.encode()).hexdigest()[:8]}",
         )
-        return f"已启动{'图生图' if images else '文生图'}任务，正在生成中。图片生成完成后，系统会自动将结果发送到聊天窗口."
+        return f"已启动{'图生图' if images else '文生图'}任务，正在生成中。图片生成完成后，系统会自动将结果发送到聊天窗口（生图时间约40~300秒）."
 
     async def _getImagesFromToolParams(self, kwargs: dict[str, Any]) -> list[bytes]:
         """从工具参数中获取图片（URL 和本地路径）。"""
