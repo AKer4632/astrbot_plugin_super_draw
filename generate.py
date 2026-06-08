@@ -141,14 +141,14 @@ class ImageGenerator:
     async def _geminiGenerate(self, prompt: str, images: list[bytes], size: str) -> list[bytes]:
         """
         Gemini 生图：把文本和参考图一起发给 models.generate_content。
-        response_modalities=["IMAGE"] 明确告诉模型要返回图片；有些 Gemini 模型也可能返回文字说明，这里只取图片。
+        response_modalities=["TEXT", "IMAGE"] 是官方示例里的稳定写法；模型可能同时回文字说明和图片，这里只取图片。
         """
         if genaiTypes is None:
             raise RuntimeError("缺少 google-genai 依赖，请先安装 requirements.txt。")
 
         client = self._getGeminiClient()  # 官方客户端从这里取，Key 轮换后会自动重建
         contents = self._buildGeminiContents(prompt, images)  # 文本和参考图显式放进同一个请求
-        config = genaiTypes.GenerateContentConfig(response_modalities=["IMAGE"])  # 只要求图片，避免模型只回文字
+        config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])  # 允许模型回文字，但后面只提取图片
         aspectRatio = self._mapOpenAISizeToGeminiRatio(size)  # 插件内部 size 统一映射到 Gemini 宽高比
         if aspectRatio:
             config.image_config = genaiTypes.ImageConfig(aspect_ratio=aspectRatio)
@@ -184,8 +184,11 @@ class ImageGenerator:
         result: list[bytes] = []
         for part in getattr(response, "parts", []) or []:
             inlineData = getattr(part, "inline_data", None)  # Gemini 图片通常放在 part.inline_data.data
-            if inlineData and getattr(inlineData, "data", None):
-                result.append(inlineData.data)
+            imageData = getattr(inlineData, "data", None) if inlineData else None
+            if isinstance(imageData, bytes):
+                result.append(imageData)  # 新版 google-genai 通常已经给 bytes，可以直接保存
+            elif isinstance(imageData, str):
+                result.append(base64.b64decode(imageData))  # 兼容少数场景返回 base64 字符串
         if not result:
             raise ValueError("Gemini 响应中未找到图片数据，请确认模型支持图片输出。")
         return result
