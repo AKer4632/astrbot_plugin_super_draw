@@ -18,7 +18,7 @@
             "description": "供应商名称",
             "hint": "用于区分不同供应商，生图模型格式为 '供应商名称/模型名称'",
             "type": "string",
-            "default": ""
+            "default": "OpenAI"
           },
           "api_type": {
             "description": "接口类型",
@@ -32,7 +32,7 @@
           },
           "base_url": {
             "description": "API Base URL",
-            "hint": "OpenAI 兼容接口地址，留空使用默认地址；Gemini 官方接口会忽略这个字段",
+            "hint": "OpenAI 兼容接口地址，留空使用默认地址",
             "type": "string",
             "default": ""
           },
@@ -47,7 +47,47 @@
             "hint": "用于 /生图模型 命令切换时的可选模型",
             "type": "list",
             "default": [
-              "gpt-image-2",
+              "gpt-image-2"
+            ]
+          }
+        }
+      },
+      "gemini": {
+        "name": "Gemini 接口",
+        "hint": "使用 Google Gemini 官方生图接口，推荐使用 gemini-2.5-flash-image-preview 模型",
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于区分不同供应商，生图模型格式为 '供应商名称/模型名称'",
+            "type": "string",
+            "default": "Gemini"
+          },
+          "api_type": {
+            "description": "接口类型",
+            "hint": "这里必须保持 gemini，插件会用 Google Gen AI SDK 调用官方接口",
+            "type": "string",
+            "default": "gemini",
+            "options": [
+              "gemini"
+            ]
+          },
+          "base_url": {
+            "description": "API Base URL",
+            "hint": "Gemini 官方接口不需要填写 Base URL，保持为空即可",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "Gemini API Keys",
+            "hint": "填写 Gemini API Key，支持多个 Key 轮换使用",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换时的可选 Gemini 生图模型",
+            "type": "list",
+            "default": [
               "gemini-2.5-flash-image-preview"
             ]
           }
