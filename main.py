@@ -16,12 +16,14 @@ LLM 调用 generate_image(prompt="画一只猫", imageUrls=["https://example.com
 
 from __future__ import annotations
 
+# 标准库只处理后台任务、任务编号、时间戳、路径和通用类型，不写任何 AstrBot 业务规则。
 import asyncio
 import hashlib
 import time
 from pathlib import Path
 from typing import Any
 
+# AstrBot SDK 只在入口层出现，保证 generate.py、data.py 和 tool/ 都能脱离 AstrBot 单独理解。
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -32,9 +34,12 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.io import download_image_by_url
+
+# pydantic 只用来声明 LLM 工具参数，让 AstrBot 能读懂 generate_image 的输入格式。
 from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
+# 本插件自己的三层：data 管数据，generate 执行生图，tool 只做通用文件操作。
 from .data import PluginData
 from .generate import ImageGenerator
 from .tool.file import cleanCache, saveImage
@@ -47,13 +52,16 @@ class SuperDraw(Star):
     """
 
     def __init__(self, context: Context, config: AstrBotConfig):
+        """插件创建时把 AstrBot 配置变成可追踪的数据，并准备生图指令对象。"""
         super().__init__(context)
-        dataDir = StarTools.get_data_dir()  # AstrBot 给每个插件分配的数据目录
-        self.data = PluginData(config, dataDir)  # 读取配置和运行时数据
-        self.cacheDir = dataDir / "cache"  # 生成图和参考图临时缓存目录
-        self.cacheDir.mkdir(parents=True, exist_ok=True)
+
+        dataDir = StarTools.get_data_dir()  # AstrBot 给每个插件分配的数据目录，所有运行时文件都放这里
+        self.data = PluginData(config, dataDir)  # 数据层读取配置、预设、用量，不直接发消息或生图
+        self.cacheDir = dataDir / "cache"  # 反馈层发送图片前，先把图片字节临时保存到这个目录
+        self.cacheDir.mkdir(parents=True, exist_ok=True)  # 目录不存在就创建，避免第一次生图保存失败
         self.generator = ImageGenerator(
             apiKeys=self.data.apiKeys,
+            apiType=self.data.apiType,
             baseURL=self.data.baseURL,
             model=self.data.model,
             timeout=self.data.timeout,
@@ -68,21 +76,21 @@ class SuperDraw(Star):
             logger.error("[SuperDraw] 未配置 API Key，生图功能不可用。")
 
         if self.data.enableLLMTool and self.data.apiKeys:
-            self.context.add_llm_tools(ImageTool(plugin=self))
+            self.context.add_llm_tools(ImageTool(plugin=self))  # 让 LLM 可以把自然语言意图转成 generate_image 调用
             logger.info("[SuperDraw] 已注册图像生成 LLM 工具。")
 
-        self._startBackground(self._cleanCacheLoop(), "cache_cleanup")
+        self._startBackground(self._cleanCacheLoop(), "cache_cleanup")  # 清理任务独立后台跑，不阻塞用户命令
         logger.info(f"[SuperDraw] 插件加载完成，模型：{self.data.currentModelKey or self.data.model}")
 
     async def terminate(self):
-        """插件卸载时取消后台任务并关闭 OpenAI 客户端。"""
+        """插件卸载时取消后台任务并关闭生图客户端，避免后台连接继续占资源。"""
         for task in list(self.backgroundTasks):
             if not task.done():
-                task.cancel()
+                task.cancel()  # 先发取消信号，让清理循环和生图任务自己停下来
         if self.backgroundTasks:
-            await asyncio.gather(*self.backgroundTasks, return_exceptions=True)
-        self.backgroundTasks.clear()
-        await self.generator.close()
+            await asyncio.gather(*self.backgroundTasks, return_exceptions=True)  # 等所有后台任务收尾，异常不再向外抛
+        self.backgroundTasks.clear()  # 清空任务账本，卸载后不保留旧引用
+        await self.generator.close()  # 关闭 OpenAI 或 Gemini 客户端连接池
         logger.info("[SuperDraw] 插件已卸载。")
 
     @filter.command("生图")
@@ -134,7 +142,7 @@ class SuperDraw(Star):
             return
 
         result = self.data.switchModel(int(commandText))
-        await self.generator.setConfig(self.data.apiKeys, self.data.baseURL, self.data.model)
+        await self.generator.setConfig(self.data.apiKeys, self.data.baseURL, self.data.model, self.data.apiType)
         yield event.plain_result(result)
 
     @filter.command("预设")

@@ -20,9 +20,19 @@
             "type": "string",
             "default": ""
           },
+          "api_type": {
+            "description": "接口类型",
+            "hint": "openai 表示 OpenAI 兼容接口；gemini 表示 Google Gemini 官方生图接口",
+            "type": "string",
+            "default": "openai",
+            "options": [
+              "openai",
+              "gemini"
+            ]
+          },
           "base_url": {
             "description": "API Base URL",
-            "hint": "OpenAI 兼容接口地址，留空使用默认地址",
+            "hint": "OpenAI 兼容接口地址，留空使用默认地址；Gemini 官方接口会忽略这个字段",
             "type": "string",
             "default": ""
           },
@@ -37,7 +47,8 @@
             "hint": "用于 /生图模型 命令切换时的可选模型",
             "type": "list",
             "default": [
-              "gpt-image-2"
+              "gpt-image-2",
+              "gemini-2.5-flash-image-preview"
             ]
           }
         }

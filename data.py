@@ -32,10 +32,12 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 class ImageProvider:
     """
     一个生图供应商的配置。
-    name 是给人看的供应商名，baseURL/apiKeys/model 是真正传给生图接口的数据。
+    name 是给人看的供应商名，apiType 决定走 OpenAI 兼容接口还是 Gemini 官方接口。
+    baseURL 只给 OpenAI 兼容接口使用，Gemini 官方接口会自动忽略它。
     """
 
     name: str
+    apiType: str
     baseURL: str
     apiKeys: list[str]
     availableModels: list[str]
@@ -58,6 +60,7 @@ class PluginData:
         self.currentModelKey: str = ""  # 当前模型完整名，格式：供应商/模型
         self.currentProvider: ImageProvider | None = None  # 当前使用的供应商
         self.apiKeys: list[str] = []  # 当前供应商 API Key 列表
+        self.apiType: str = "openai"  # 当前供应商接口类型：openai 或 gemini
         self.baseURL: str = ""  # 当前供应商 API 基础地址
         self.model: str = "gpt-image-2"  # 当前模型名
         self.timeout: int = 180  # 请求超时秒数（固定值，不展示配置）
@@ -95,33 +98,31 @@ class PluginData:
 
     def checkUser(self, userID: str) -> str | None:
         """检查用户能否生图；能返回 None，不能返回原因字符串。"""
-
-        # 频率限制：两次请求间隔不够
         if self.rateLimitSeconds > 0:
-            now = time.time()
-            lastTime = self.lastRequestTimeByUser.get(userID, 0)
+            now = time.time()  # 当前时间用来计算冷却间隔
+            lastTime = self.lastRequestTimeByUser.get(userID, 0)  # 没记录过就按 0 处理，第一次一定能通过
             if now - lastTime < self.rateLimitSeconds:
-                remain = int(self.rateLimitSeconds - (now - lastTime))
+                remain = int(self.rateLimitSeconds - (now - lastTime))  # 向下取整即可，提示不用精确到毫秒
                 return f"请求过于频繁，请在 {remain} 秒后再试。"
-            self.lastRequestTimeByUser[userID] = now
+            self.lastRequestTimeByUser[userID] = now  # 通过冷却检查后立刻记时间，避免用户连续开很多后台任务
 
-        # 每日次数限制
         if self.enableDailyLimit:
-            today = datetime.date.today().isoformat()
-            userCount = self.usageCountByDate.setdefault(today, {}).get(userID, 0)
+            today = datetime.date.today().isoformat()  # 每天一个桶，只统计当天成功生成的次数
+            userCount = self.usageCountByDate.setdefault(today, {}).get(userID, 0)  # 没生成过就是 0 次
             if userCount >= self.dailyLimitCount:
                 return f"你今天的生图额度已用完（{self.dailyLimitCount} 次），请明天再试。"
 
         return None
 
     def recordUsage(self, userID: str) -> None:
-        """记录用户成功生图一次。"""
+        """记录用户成功生图一次；只有开启每日限制时才需要落盘。"""
         if not self.enableDailyLimit:
             return
-        today = datetime.date.today().isoformat()
-        self.usageCountByDate.setdefault(today, {})
-        self.usageCountByDate[today][userID] = self.usageCountByDate[today].get(userID, 0) + 1
-        self._saveUsage()
+
+        today = datetime.date.today().isoformat()  # 用日期字符串做第一层 key，方便清理旧数据
+        self.usageCountByDate.setdefault(today, {})  # 当天第一次记录时先创建当天账本
+        self.usageCountByDate[today][userID] = self.usageCountByDate[today].get(userID, 0) + 1  # 成功一次才加一次
+        self._saveUsage()  # 写回 usage.json，重启插件后额度仍然准确
 
     def getUserUsageCount(self, userID: str) -> int:
         """读取用户今天已经成功生成的次数。"""
@@ -137,9 +138,9 @@ class PluginData:
         if not self.availableModels:
             return "当前没有可用生图模型，请先在插件配置里添加供应商、API Key 和模型。"
 
-        lines = ["可用生图模型："]
+        lines = ["可用生图模型："]  # 文本第一行先说明这是列表，用户不用猜数字含义
         for index, item in enumerate(self.availableModels, 1):
-            marker = " ✅" if item["key"] == self.currentModelKey else ""
+            marker = " ✅" if item["key"] == self.currentModelKey else ""  # 当前模型加对勾，反馈更直观
             lines.append(f"{index}. {item['key']}{marker}")
         lines.append("\n发送 /生图模型 数字 可切换供应商和模型，例如：/生图模型 1")
         return "\n".join(lines)
@@ -295,13 +296,14 @@ class PluginData:
             if not isinstance(rawProvider, dict):
                 continue
 
-            name = str(rawProvider.get("name") or f"供应商{index}").strip()
-            baseURL = self._cleanBaseURL(str(rawProvider.get("base_url") or ""))
-            apiKeys = [key for key in rawProvider.get("api_keys", []) if key]
-            models = [str(model).strip() for model in rawProvider.get("available_models", []) if str(model).strip()]
+            name = str(rawProvider.get("name") or f"供应商{index}").strip()  # 没填名称就用顺序生成一个可读名字
+            apiType = self._cleanApiType(str(rawProvider.get("api_type") or "openai"))  # 写错也收束成固定接口类型
+            baseURL = self._cleanBaseURL(str(rawProvider.get("base_url") or ""))  # OpenAI 中转地址去掉多余 /v1
+            apiKeys = [key for key in rawProvider.get("api_keys", []) if key]  # 空 Key 直接丢掉，避免请求时报奇怪错误
+            models = [str(model).strip() for model in rawProvider.get("available_models", []) if str(model).strip()]  # 空模型不展示
 
             if apiKeys and models:
-                providers.append(ImageProvider(name=name, baseURL=baseURL, apiKeys=apiKeys, availableModels=models))
+                providers.append(ImageProvider(name=name, apiType=apiType, baseURL=baseURL, apiKeys=apiKeys, availableModels=models))
         return providers
 
     def _parseOldSingleProvider(self, api: Any) -> list[ImageProvider]:
@@ -317,6 +319,7 @@ class PluginData:
         return [
             ImageProvider(
                 name="OpenAI",
+                apiType="openai",
                 baseURL=self._cleanBaseURL((api.get("base_url") or "").strip()),
                 apiKeys=apiKeys,
                 availableModels=[model],
@@ -342,6 +345,7 @@ class PluginData:
             self.currentModelKey = ""
             self.currentProvider = None
             self.apiKeys = []
+            self.apiType = "openai"
             self.baseURL = ""
             self.model = "gpt-image-2"
             return
@@ -352,6 +356,7 @@ class PluginData:
 
         self.currentModelKey = matched["key"]
         self.currentProvider = provider
+        self.apiType = provider.apiType
         self.apiKeys = provider.apiKeys
         self.baseURL = provider.baseURL
         self.model = matched["model"]
@@ -431,6 +436,12 @@ class PluginData:
                 if name.strip() and prompt.strip():
                     presets[name.strip()] = prompt.strip()
         return presets
+
+    @staticmethod
+    def _cleanApiType(apiType: str) -> str:
+        """把配置里的接口类型整理成固定值；写错时默认用 OpenAI 兼容接口。"""
+        text = (apiType or "openai").strip().lower()
+        return "gemini" if text == "gemini" else "openai"
 
     @staticmethod
     def _cleanBaseURL(url: str) -> str:

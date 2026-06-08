@@ -10,6 +10,7 @@ await cleanCache(cacheDir, maxCount=100)
 
 from __future__ import annotations
 
+# 标准库只负责生成文件名、读取文件时间和拼接路径，不包含任何插件业务判断。
 import hashlib
 import os
 import time
@@ -23,11 +24,11 @@ def saveImage(cacheDir: Path, imageBytes: bytes) -> str | None:
     失败返回 None。
     """
     try:
-        cacheDir.mkdir(parents=True, exist_ok=True)
-        imageHash = hashlib.md5(imageBytes).hexdigest()[:8]  # 内容哈希防重名
-        fileName = f"gen_{int(time.time())}_{imageHash}.png"
-        filePath = cacheDir / fileName
-        filePath.write_bytes(imageBytes)
+        cacheDir.mkdir(parents=True, exist_ok=True)  # 第一次使用缓存目录时自动创建
+        imageHash = hashlib.md5(imageBytes).hexdigest()[:8]  # 内容哈希防重名，同一秒多张图也不会互相覆盖
+        fileName = f"gen_{int(time.time())}_{imageHash}.png"  # 文件名同时带时间和内容特征，方便人工排查
+        filePath = cacheDir / fileName  # 所有生成图集中放进缓存目录，清理时只扫这里
+        filePath.write_bytes(imageBytes)  # 真正写入图片字节，AstrBot 后面按路径发送
         return str(filePath)
     except Exception:
         return None
@@ -41,9 +42,8 @@ async def cleanCache(cacheDir: Path, maxCount: int) -> int:
     if not cacheDir.exists():
         return 0
 
-    # 收集所有文件和修改时间
-    files = [(path, os.path.getmtime(path)) for path in cacheDir.iterdir() if path.is_file()]
-    files.sort(key=lambda item: item[1])  # 修改时间越早排越前
+    files = [(path, os.path.getmtime(path)) for path in cacheDir.iterdir() if path.is_file()]  # 只清理文件，不碰子目录
+    files.sort(key=lambda item: item[1])  # 修改时间越早排越前，越旧越先删
 
     if len(files) <= maxCount:
         return 0  # 没超限制，不用删

@@ -7,11 +7,16 @@
 
 调用示例：
 uv run python test.py
+py -3 test.py
 
-.env 必须提供这些配置：
-OPENAI_API_KEY=你的 Key
+.env 可以测试 OpenAI 兼容接口，也可以测试 Gemini 官方接口：
+API_TYPE=openai
+OPENAI_API_KEY=你的 OpenAI Key
 OPENAI_BASE_URL=你的 OpenAI 兼容接口地址
 OPENAI_MODEL=你的生图模型
+API_TYPE=gemini
+GEMINI_API_KEY=你的 Gemini Key
+GEMINI_MODEL=gemini-2.5-flash-image-preview
 TEXT_PROMPT=文生图提示词
 IMAGE_PROMPT=图生图提示词
 ASPECT_RATIO=1:1
@@ -43,13 +48,15 @@ async def main() -> None:
     outputDir.mkdir(parents=True, exist_ok=True)
 
     print("开始真实生图测试，只使用 .env 配置。")
-    print(f"OPENAI_BASE_URL={settings['baseURL']}")
-    print(f"OPENAI_MODEL={settings['model']}")
+    print(f"API_TYPE={settings['apiType']}")
+    print(f"BASE_URL={settings['baseURL'] or '官方默认地址'}")
+    print(f"MODEL={settings['model']}")
     print(f"ASPECT_RATIO={settings['aspectRatio']} -> size={settings['size']}")
     print(f"RESOLUTION={settings['resolution']} -> quality={settings['quality']}")
 
     generator = ImageGenerator(
         apiKeys=settings["apiKeys"],
+        apiType=settings["apiType"],
         baseURL=settings["baseURL"],
         model=settings["model"],
         timeout=settings["timeout"],
@@ -128,16 +135,18 @@ def readEnv(path: Path) -> dict[str, str]:
 
 def readSettings(config: dict[str, str]) -> dict:
     """把 .env 文本配置整理成 ImageGenerator 能直接使用的数据。"""
-    apiKeys = readApiKeys(config)
-    require(apiKeys, "OPENAI_API_KEY 或 OPENAI_API_KEYS")
+    apiType = readApiType(config)
+    apiKeys = readApiKeys(config, apiType)
+    require(apiKeys, "OPENAI_API_KEY、OPENAI_API_KEYS、GEMINI_API_KEY 或 GEMINI_API_KEYS")
 
     aspectRatio = requireText(config, "ASPECT_RATIO")
     resolution = requireText(config, "RESOLUTION")
 
     return {
+        "apiType": apiType,
         "apiKeys": apiKeys,
-        "baseURL": requireText(config, "OPENAI_BASE_URL"),
-        "model": requireText(config, "OPENAI_MODEL"),
+        "baseURL": readBaseURL(config, apiType),
+        "model": readModel(config, apiType),
         "timeout": readInt(config, "TIMEOUT", 180),
         "maxRetry": readInt(config, "MAX_RETRY", 3),
         "textPrompt": requireText(config, "TEXT_PROMPT"),
@@ -149,10 +158,35 @@ def readSettings(config: dict[str, str]) -> dict:
     }
 
 
-def readApiKeys(config: dict[str, str]) -> list[str]:
-    """读取 OPENAI_API_KEY 或 OPENAI_API_KEYS，多个 Key 用英文逗号分隔。"""
-    rawText = config.get("OPENAI_API_KEYS") or config.get("OPENAI_API_KEY") or ""
+def readApiType(config: dict[str, str]) -> str:
+    """读取 API_TYPE；只接受 openai 和 gemini，避免拼错后请求走错接口。"""
+    apiType = config.get("API_TYPE", "openai").strip().lower()
+    if apiType not in ("openai", "gemini"):
+        raise RuntimeError("API_TYPE 只能填写 openai 或 gemini。")
+    return apiType
+
+
+def readApiKeys(config: dict[str, str], apiType: str) -> list[str]:
+    """按接口类型读取 Key；多个 Key 用英文逗号分隔。"""
+    if apiType == "gemini":
+        rawText = config.get("GEMINI_API_KEYS") or config.get("GEMINI_API_KEY") or config.get("OPENAI_API_KEYS") or config.get("OPENAI_API_KEY") or ""
+    else:
+        rawText = config.get("OPENAI_API_KEYS") or config.get("OPENAI_API_KEY") or ""
     return [key.strip() for key in rawText.split(",") if key.strip()]
+
+
+def readBaseURL(config: dict[str, str], apiType: str) -> str:
+    """OpenAI 兼容接口需要 Base URL；Gemini 官方接口不需要。"""
+    if apiType == "gemini":
+        return ""
+    return requireText(config, "OPENAI_BASE_URL")
+
+
+def readModel(config: dict[str, str], apiType: str) -> str:
+    """按接口类型读取模型名；Gemini 未填写时使用官方生图预览模型。"""
+    if apiType == "gemini":
+        return config.get("GEMINI_MODEL", "gemini-2.5-flash-image-preview").strip() or "gemini-2.5-flash-image-preview"
+    return requireText(config, "OPENAI_MODEL")
 
 
 def requireText(config: dict[str, str], key: str) -> str:

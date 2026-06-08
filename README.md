@@ -1,6 +1,6 @@
 # AstrBot 超级生图插件
 
-给 AstrBot 使用的图像生成插件。基于 OpenAI 官方 SDK，以 OpenAI 兼容格式调用 `gpt-image-2` 模型，支持文生图和图生图。
+给 AstrBot 使用的图像生成插件。支持 OpenAI 兼容接口和 Gemini 官方生图接口，可以调用 `gpt-image-2`、`gemini-2.5-flash-image-preview` 等模型，支持文生图和图生图。
 
 代码按 HOP（面向人类编程）规范来写，遵循一条直白的主线：
 
@@ -17,6 +17,7 @@
 ## 功能特色
 
 - **OpenAI 兼容格式**：用 OpenAI 官方 SDK，请求格式兼容 OpenAI 接口，支持各种中转服务。
+- **Gemini 官方接口**：用 Google Gen AI SDK 调用 Gemini 生图模型，支持 Gemini API Key。
 - **文生图**：输入文字，生成图片。
 - **图生图**：消息图片、回复链图片、`@用户`头像、合并转发消息、URL、本地文件都可以作为参考图。
 - **LLM 工具调用**：LLM 可以自动调用 `generate_image` 工具，支持同时传入 `imageUrls`（URL 列表）和 `imagePaths`（本地路径列表）。
@@ -36,8 +37,9 @@
 ## 快速开始
 
 1. 把插件目录放到 AstrBot 的插件目录里。
-2. 在 AstrBot 插件配置中填入 API Key 和 Base URL（使用中转服务时填写中转地址）。
-3. 重启 AstrBot 或重新加载插件。
+2. 在 AstrBot 插件配置中添加供应商：OpenAI 兼容接口选择 `openai`，Gemini 官方接口选择 `gemini`。
+3. 填入 API Key；OpenAI 兼容接口按需填写 Base URL，Gemini 官方接口不用填写 Base URL。
+4. 重启 AstrBot 或重新加载插件。
 4. 在聊天里发送：
 
 ```text
@@ -166,25 +168,34 @@ generate_image(
 
 ## 配置说明
 
-### 基础配置
+### API 供应商
 
-| 配置项           | 默认值        | 说明                                    |
-| ---------------- | ------------- | --------------------------------------- |
-| `api_keys`       | `[]`          | API Key 列表，可以填多个                |
-| `base_url`       | `""`          | API 地址，为空时使用 OpenAI 默认地址    |
-| `model`          | `gpt-image-2` | 模型名称（默认 `gpt-image-2`）          |
-| `proxy`          | `null`        | HTTP 代理，例如 `http://127.0.0.1:7890` |
-| `timeout`        | `180`         | 请求超时秒数                            |
-| `max_retry`      | `3`           | 最大重试次数                            |
-| `max_concurrent` | `3`           | 最大并发任务数                          |
+| 配置项             | 默认值        | 说明                                                       |
+| ------------------ | ------------- | ---------------------------------------------------------- |
+| `name`             | `""`          | 供应商名称，例如 `OpenAI`、`Gemini`                        |
+| `api_type`         | `openai`      | 接口类型，`openai` 走 OpenAI 兼容接口，`gemini` 走官方接口 |
+| `api_keys`         | `[]`          | API Key 列表，可以填多个，失败时自动轮换                   |
+| `base_url`         | `""`          | OpenAI 兼容接口地址；Gemini 官方接口会忽略                 |
+| `available_models` | `gpt-image-2` | 当前供应商可切换的模型列表                                 |
+
+Gemini 示例配置：
+
+```text
+name: Gemini
+api_type: gemini
+api_keys: [你的 Gemini API Key]
+base_url: 留空
+available_models: [gemini-2.5-flash-image-preview]
+```
 
 ### `generation`
 
-| 配置项                 | 默认值   | 说明                |
-| ---------------------- | -------- | ------------------- |
-| `default_aspect_ratio` | `auto`   | 默认宽高比          |
-| `default_quality`      | `medium` | 默认质量（对应 2K） |
-| `show_generation_info` | `false`  | 是否显示耗时和数量  |
+| 配置项                 | 默认值   | 说明                                                 |
+| ---------------------- | -------- | ---------------------------------------------------- |
+| `model`                | `""`     | 当前模型，格式是 `供应商名称/模型名称`，空值自动选择 |
+| `max_retry_attempts`   | `3`      | 最大重试次数                                         |
+| `max_concurrent_tasks` | `3`      | 最大并发任务数                                       |
+| `default_quality`      | `medium` | 默认质量；Gemini 官方接口会忽略这个参数              |
 
 ### `user_limits`
 
@@ -235,8 +246,8 @@ tool/picture.py       图片操作：检测格式、转换格式
 -> 提取 prompt、参考图（消息图片/@头像/合并转发/URL/本地文件）
 -> 检查用户限制（冷却、每日次数、参考图大小）
 -> 调用 generate.py 的 ImageGenerator.generate()
-   - 有参考图走图生图（images.edit）
-   - 无参考图走文生图（images.generate）
+   - OpenAI 兼容接口：有参考图走 images.edit，没有参考图走 images.generate
+   - Gemini 官方接口：文本和参考图一起走 models.generate_content，从 inline_data 取图片
    - 自动重试和 Key 轮换
 -> 保存图片到缓存目录
 -> AstrBot 把结果发回聊天
@@ -251,8 +262,9 @@ tool/picture.py       图片操作：检测格式、转换格式
 ### 为什么生图失败？
 
 1. 确认 API Key 有效
-2. 确认 Base URL 正确（使用中转时，中转服务需要支持 OpenAI 兼容格式）
-3. 确认模型支持图生图（`gpt-image-2` 支持）
+2. OpenAI 兼容接口要确认 Base URL 正确（中转服务需要支持 OpenAI 图片接口）
+3. Gemini 官方接口要确认 `api_type` 是 `gemini`，并且已安装 `google-genai`
+4. 确认模型支持图片输出和图生图，例如 `gpt-image-2`、`gemini-2.5-flash-image-preview`
 
 ### 缓存图片会一直增长吗？
 
