@@ -1,4 +1,10 @@
 {
+  "enabled": {
+    "description": "启用插件",
+    "hint": "关闭后插件将停止响应命令、停止注册 LLM 工具，相当于安全开关",
+    "type": "bool",
+    "default": true
+  },
   "enable_llm_tool": {
     "description": "启用 LLM 工具",
     "hint": "启用后，LLM 可以在对话中自动调用图像生成功能",
