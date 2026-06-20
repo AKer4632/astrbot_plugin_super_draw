@@ -57,6 +57,12 @@ class SuperDraw(Star):
 
         dataDir = StarTools.get_data_dir()  # AstrBot 给每个插件分配的数据目录，所有运行时文件都放这里
         self.data = PluginData(config, dataDir)  # 数据层读取配置、预设、用量，不直接发消息或生图
+        
+        # 安全开关：如果禁用，跳过初始化
+        if not self.data.enabled:
+            logger.info("[SuperDraw] 插件已禁用。")
+            return
+            
         self.cacheDir = dataDir / "cache"  # 反馈层发送图片前，先把图片字节临时保存到这个目录
         self.cacheDir.mkdir(parents=True, exist_ok=True)  # 目录不存在就创建，避免第一次生图保存失败
         self.generator = ImageGenerator(
@@ -72,6 +78,9 @@ class SuperDraw(Star):
 
     async def initialize(self):
         """插件加载时注册 LLM 工具，并启动缓存清理循环。"""
+        if not getattr(self.data, "enabled", True):
+            return
+            
         if not self.data.apiKeys:
             logger.error("[SuperDraw] 未配置 API Key，生图功能不可用。")
 
@@ -84,18 +93,25 @@ class SuperDraw(Star):
 
     async def terminate(self):
         """插件卸载时取消后台任务并关闭生图客户端，避免后台连接继续占资源。"""
+        if not getattr(self.data, "enabled", True):
+            return
+            
         for task in list(self.backgroundTasks):
             if not task.done():
                 task.cancel()  # 先发取消信号，让清理循环和生图任务自己停下来
         if self.backgroundTasks:
             await asyncio.gather(*self.backgroundTasks, return_exceptions=True)  # 等所有后台任务收尾，异常不再向外抛
         self.backgroundTasks.clear()  # 清空任务账本，卸载后不保留旧引用
-        await self.generator.close()  # 关闭 OpenAI 或 Gemini 客户端连接池
+        if hasattr(self, "generator"):
+            await self.generator.close()  # 关闭 OpenAI 或 Gemini 客户端连接池
         logger.info("[SuperDraw] 插件已卸载。")
 
     @filter.command("生图")
     async def cmdGenerate(self, event: AstrMessageEvent):
         """用户发送 /生图 时进入这里：检查限制、解析提示词、提取参考图、启动后台生图。"""
+        if not getattr(self.data, "enabled", True):
+            return
+            
         userID = event.unified_msg_origin
         reason = self.data.checkUser(userID)
         if reason:
@@ -131,6 +147,9 @@ class SuperDraw(Star):
     @filter.command("生图模型")
     async def cmdModel(self, event: AstrMessageEvent):
         """用户发送 /生图模型 时进入这里：不带数字显示列表，带数字切换供应商和模型。"""
+        if not getattr(self.data, "enabled", True):
+            return
+            
         commandText = self._readCommandText(event.message_str or "")
 
         if not commandText:
@@ -148,6 +167,9 @@ class SuperDraw(Star):
     @filter.command("预设")
     async def cmdPreset(self, event: AstrMessageEvent):
         """用户发送 /预设 时进入这里：展示、查看、添加或删除预设。"""
+        if not getattr(self.data, "enabled", True):
+            return
+            
         commandText = self._readCommandText(event.message_str or "")
 
         if not commandText or commandText.startswith("查看"):
@@ -354,6 +376,9 @@ class ImageTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolExecResult:
         """LLM 调用工具时进入这里，启动后台生图并立即返回文字反馈。"""
+        if not getattr(self.plugin.data, "enabled", True):
+            return "超级生图插件当前处于禁用状态，请联系管理员启用。"
+            
         event = self._readEvent(context)
         if not event:
             return "无法获取当前消息上下文。"
