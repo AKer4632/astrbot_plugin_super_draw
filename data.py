@@ -80,6 +80,7 @@ class PluginData:
         self.cleanupIntervalHours: int = 24  # 清理间隔小时数
 
         # ─── LLM 工具 ───
+        self.enabled: bool = True  # 总开关
         self.enableLLMTool: bool = True  # 是否注册 LLM 工具
 
         # ─── 预设 ───
@@ -281,6 +282,7 @@ class PluginData:
         self.dailyLimitCount = max(1, limits.get("daily_limit_count", 10))
 
         # LLM 工具
+        self.enabled = self.rawConfig.get("enabled", True)
         self.enableLLMTool = self.rawConfig.get("enable_llm_tool", True)
 
         # 预设

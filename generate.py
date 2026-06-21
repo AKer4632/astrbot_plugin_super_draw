@@ -119,7 +119,7 @@ class ImageGenerator:
             model=self.model,
             prompt=prompt,
             n=1,
-            size=size,
+            size=self._resolveOpenAISize(size),
             quality=quality,
         )
         return self._extractOpenAIImages(response)
@@ -133,7 +133,7 @@ class ImageGenerator:
             image=imageFiles,
             prompt=prompt,
             n=1,
-            size=size,
+            size=self._resolveOpenAISize(size),
             quality=quality,
         )
         return self._extractOpenAIImages(response)
@@ -218,6 +218,11 @@ class ImageGenerator:
             self.currentKeyIndex = (self.currentKeyIndex + 1) % len(self.apiKeys)
         self._openaiClient = None
         self._geminiClient = None
+
+    @staticmethod
+    def _resolveOpenAISize(size: str) -> str:
+        """OpenAI 接口不接受 'auto'，需映射成合法尺寸。"""
+        return size if size and size != "auto" else "1024x1024"
 
     @staticmethod
     def _mapOpenAISizeToGeminiRatio(size: str) -> str:
