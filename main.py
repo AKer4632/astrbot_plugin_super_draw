@@ -127,6 +127,77 @@ class SuperDraw(Star):
             lines.append(f"{tid} | {meta.get('prompt', '?')}... | {elapsed}s")
         yield event.plain_result("\n".join(lines))
 
+    @filter.command("生图开关")
+    async def cmd_toggle(self, event: AstrMessageEvent):
+        newState = not self.data.enabled
+        self.data.enabled = newState
+        self.data.rawConfig["enabled"] = newState
+        try:
+            self.data.rawConfig.save_config()
+        except Exception as e:
+            logger.error(f"[SuperDraw] 保存配置失败: {e}")
+        if not newState:
+            for t in list(self._tasks.values()):
+                if not t.done():
+                    t.cancel()
+        yield event.plain_result(f"生图功能已{'开启' if newState else '关闭'}。")
+
+    @filter.command("生图取消")
+    async def cmd_cancel(self, event: AstrMessageEvent):
+        if not getattr(self.data, "enabled", True):
+            return
+        arg = (event.message_str or "").strip().split(maxsplit=1)[-1] if " " in (event.message_str or "") else ""
+        if not arg:
+            yield event.plain_result("请提供任务ID。")
+            return
+        tid = arg.strip()
+        if tid in self._tasks:
+            t = self._tasks[tid]
+            if not t.done():
+                t.cancel()
+                self._task_meta.pop(tid, None)
+                yield event.plain_result(f"任务 {tid} 已取消。")
+            else:
+                yield event.plain_result(f"任务 {tid} 已经跑完了。")
+        else:
+            yield event.plain_result(f"任务 {tid} 不存在。")
+
+    @filter.command("预设")
+    async def cmd_preset(self, event: AstrMessageEvent):
+        if not getattr(self.data, "enabled", True):
+            return
+        text = (event.message_str or "").strip().split(maxsplit=1)[-1] if " " in (event.message_str or "") else ""
+        if not text:
+            yield event.plain_result(self.data.formatPresetList())
+            return
+        if text.startswith("查看 "):
+            yield event.plain_result(self.data.getPresetDetail(text[3:].strip()))
+        elif text.startswith("添加 "):
+            result = self._addPreset(text[3:])
+            yield event.plain_result(result)
+        elif text.startswith("删除 "):
+            result = self._removePreset(text[3:].strip())
+            yield event.plain_result(result)
+        else:
+            yield event.plain_result("格式：/预设、/预设 查看 名称、/预设 添加 名称:内容、/预设 删除 名称")
+
+    def _addPreset(self, text: str) -> str:
+        if ":" not in text:
+            return "格式错误：/预设 添加 名称:内容"
+        name, content = text.split(":", 1)
+        if not name.strip() or not content.strip():
+            return "名称和内容不能为空。"
+        self.data.addPreset(name.strip(), content.strip())
+        return f"预设已添加：{name.strip()}"
+
+    def _removePreset(self, name: str) -> str:
+        n = name.strip()
+        if not n:
+            return "请提供要删除的预设名称。"
+        if self.data.removePreset(n):
+            return f"预设已删除：{n}"
+        return f"预设不存在：{n}"
+
     async def _do_draw(self, tid: str, uid: str, prompt: str, imgs: list[bytes], size: str, quality: str, fmt: str, n: int):
         async with self.semaphore:
             try:
@@ -202,7 +273,6 @@ class SuperDraw(Star):
         except Exception:
             pass
         return None
-
 
     @filter.llm_tool(name="super_draw")
     async def llm_draw(
