@@ -13,14 +13,9 @@ import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.io import download_image_by_url
-from pydantic import Field
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .data import PluginData
 from .generate import GenerateEngine
@@ -49,8 +44,7 @@ class SuperDraw(Star):
         if not self.data.providers:
             logger.error("[SuperDraw] 未配置 provider。")
         if self.data.enableLLMTool and self.data.providers:
-            self.context.add_llm_tools(ImageTool(plugin=self))
-            logger.info("[SuperDraw] 已注册 LLM 工具。")
+            logger.info("[SuperDraw] LLM 工具由装饰器自动注册。")
         self._bg(self._cleanLoop(), "clean")
         logger.info(f"[SuperDraw] 启动，模型: {self.data.currentModelKey}")
 
@@ -78,7 +72,7 @@ class SuperDraw(Star):
         raw = (event.message_str or "").strip()
         body = raw.split(maxsplit=1)[-1] if " " in raw else ""
         # 普通 /生图 直接把文字和图片透传给生图模型，不做自然语言解析，避免误伤 prompt
-        # 如需精确控制，可通过 LLM 工具 generate_image 传 size/quality/n 等参数
+        # 如需精确控制，可通过 LLM 工具 super_draw 传 size/quality/n 等参数
         prompt, preset = self.data.resolvePreset(body)
         if not prompt:
             yield event.plain_result("请提供提示词。")
@@ -210,63 +204,51 @@ class SuperDraw(Star):
         return None
 
 
-@pydantic_dataclass
-class ImageTool(FunctionTool[AstrAgentContext]):
-    name: str = "generate_image"
-    description: str = "调用图像生成引擎进行文生图或图生图。支持修改参考图、调整比例。"
-    parameters: dict = Field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string"},
-                "size": {"type": "string", "enum": ["auto", "1:1", "16:9", "9:16", "3:2", "2:3", "1024x1024", "1536x1024", "1024x1536"], "default": "auto"},
-                "quality": {"type": "string", "enum": ["auto", "medium", "high", "low"], "default": "auto"},
-                "n": {"type": "integer", "default": 1},
-                "urls": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["prompt"],
-        }
-    )
-    is_background_task: bool = True
-    plugin: Any = None
+    @filter.llm_tool(name="super_draw")
+    async def llm_draw(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        size: str = "auto",
+        quality: str = "auto",
+        n: int = 1,
+        urls: str = "",
+    ) -> str:
+        """
+        当用户想要画画、生成图片、修图、P图、改图、AI绘画时调用本工具。
+        支持文生图和图生图，会自动从聊天记录中提取参考图。
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kw) -> ToolExecResult:
-        if not getattr(self.plugin.data, "enabled", True):
+        Args:
+            prompt(string): 用户想要的图片内容描述，必填
+            size(string): 生成图片的比例，可选 auto、1:1、16:9、9:16、3:2、2:3
+            quality(string): 图片质量，可选 auto、low、medium、high
+            n(integer): 生成数量，范围 1-4
+            urls(string): 参考图 URL，多个地址用英文逗号分隔
+        """
+        if not getattr(self.data, "enabled", True):
             return "插件禁用中。"
-        ev = (
-            context.context.event
-            if hasattr(context, "context") and isinstance(context.context, AstrAgentContext)
-            else context.get("event")
-        )
-        if not ev:
-            return "无上下文。"
-        uid = ev.unified_msg_origin
-        if reason := self.plugin.data.checkUser(uid):
+        uid = event.unified_msg_origin
+        if reason := self.data.checkUser(uid):
             return reason
 
-        prompt = kw.get("prompt", "").strip()
+        prompt = prompt.strip()
         if not prompt:
-            return "需提供 prompt。"
+            return "请提供 prompt。"
 
-        imgs = []
-        for u in kw.get("urls", []):
-            if b := await self.plugin._dl(u):
-                imgs.append(b)
-        imgs.extend(await self.plugin._extract_images(ev))
+        imgs: list[bytes] = []
+        if urls:
+            for u in urls.split(","):
+                u = u.strip()
+                if b := await self._dl(u):
+                    imgs.append(b)
+        imgs.extend(await self._extract_images(event))
 
-        size = kw.get("size", "auto")
-        quality = kw.get("quality", "auto")
-        n = _to_int(str(kw.get("n", 1)), 1, 4)
-        fmt = self.plugin.data.saveFormat
+        size = size or self.data.defaultSize
+        quality = quality or self.data.defaultQuality
+        n = max(1, min(4, int(n)))
+        fmt = self.data.saveFormat
 
         tid = hashlib.md5(f"{time.time()}{uid}".encode()).hexdigest()[:8]
-        self.plugin._task_meta[tid] = {"uid": uid, "prompt": prompt[:30], "time": time.time()}
-        self.plugin._bg(self.plugin._do_draw(tid, uid, prompt, imgs, size, quality, fmt, n), tid)
-        return "已在后台启动生图任务，预计稍后发送。"
-
-
-def _to_int(value: str, low: int, high: int) -> int:
-    try:
-        return max(low, min(high, int(value)))
-    except (ValueError, TypeError):
-        return low
+        self._task_meta[tid] = {"uid": uid, "prompt": prompt[:30], "time": time.time()}
+        self._bg(self._do_draw(tid, uid, prompt, imgs, size, quality, fmt, n), tid)
+        return f"已启动生图任务(ID:{tid})，稍后会把图片发到聊天里。"
