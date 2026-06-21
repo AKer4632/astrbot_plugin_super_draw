@@ -26,9 +26,9 @@ from openai import AsyncOpenAI  # OpenAI 官方异步客户端
 
 # 图片格式识别，给参考图标注正确的 MIME 类型
 try:
-    from .tool.picture import detectMimeType
+    from .tool.picture import detectMimeType, normalize_to_supported_image
 except ImportError:
-    from tool.picture import detectMimeType
+    from tool.picture import detectMimeType, normalize_to_supported_image
 
 # Gemini SDK 是可选依赖，没装就只能用 OpenAI 接口
 try:
@@ -139,7 +139,13 @@ async def _callOpenAi(p: dict, prompt: str, images: list[bytes], size: str, qual
 
             # 有参考图用 edit 接口，没有用 generate 接口
             if images:
-                kwargs["image"] = [(f"ref_{i}.png", img, detectMimeType(img)) for i, img in enumerate(images[:16])]
+                processed_images = []
+                for i, img in enumerate(images[:16]):
+                    # OpenAI 不支持 GIF/WEBP 动态图，这里强制规范化成 PNG
+                    norm_img, mime = normalize_to_supported_image(img, target_fmt="png")
+                    processed_images.append((f"ref_{i}.png", norm_img, mime))
+
+                kwargs["image"] = processed_images
                 resp = await client.images.edit(**kwargs)
             else:
                 resp = await client.images.generate(**kwargs)
@@ -204,9 +210,10 @@ async def _callGemini(p: dict, prompt: str, images: list[bytes], size: str, qual
             # 构建请求内容：文字提示词 + 参考图
             parts: list[Any] = [genaiTypes.Part.from_text(text=prompt)]
             for img in images[:16]:
-                mime = detectMimeType(img)
+                # 同样应用规范化，把 GIF/动态图转成静态首帧
+                norm_img, mime = normalize_to_supported_image(img, target_fmt="jpeg")
                 if mime.startswith("image/"):  # 只传真正的图片，跳过无法识别的
-                    parts.append(genaiTypes.Part.from_bytes(data=img, mime_type=mime))
+                    parts.append(genaiTypes.Part.from_bytes(data=norm_img, mime_type=mime))
 
             # 配置生成参数：要求返回图片
             config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
