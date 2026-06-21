@@ -238,7 +238,7 @@ class SuperDraw(Star):
         for i, c in enumerate(event.message_obj.message):
             if i == 0 and isinstance(c, Comp.At):
                 continue
-            res.extend(await self._parse_comp(c))
+            res.extend(await self._parse_comp(c, event))
         # 正文里的 HTTP(S) 图片 URL 也当参考图
         text = event.message_str or ""
         for token in text.split():
@@ -247,18 +247,59 @@ class SuperDraw(Star):
                     res.append(b)
         return res
 
-    async def _parse_comp(self, c: Any) -> list[bytes]:
+    async def _parse_comp(self, c: Any, event: AstrMessageEvent | None = None) -> list[bytes]:
         if isinstance(c, Comp.Image):
             return [b] if (b := await self._dl(c.url or c.file)) else []
+        if isinstance(c, Comp.Forward):
+            return await self._parse_forward(c, event)
+        if isinstance(c, Comp.Nodes):
+            return sum([await self._parse_comp(n, event) for n in c.nodes], [])
+        if isinstance(c, Comp.Node):
+            return sum([await self._parse_comp(x, event) for x in (c.content or [])], [])
         if isinstance(c, Comp.Reply) and c.chain:
-            return sum([await self._parse_comp(x) for x in c.chain], [])
+            return sum([await self._parse_comp(x, event) for x in c.chain], [])
         if isinstance(c, Comp.At) and str(getattr(c, "qq", "")) not in ("", "all"):
             return [b] if (b := await self._dl(f"https://q4.qlogo.cn/headimg_dl?dst_uin={c.qq}&spec=640")) else []
-        if isinstance(c, Comp.Nodes):
-            return sum([await self._parse_comp(n) for n in c.nodes], [])
-        if isinstance(c, Comp.Node):
-            return sum([await self._parse_comp(x) for x in (c.content or [])], [])
         return []
+
+    async def _parse_forward(self, c: Comp.Forward, event: AstrMessageEvent | None) -> list[bytes]:
+        if event is None:
+            return []
+        bot = getattr(event, "bot", None)
+        if not bot or not callable(getattr(bot, "call_action", None)):
+            return []
+        forward_id = c.id or self._forward_id_from_raw(event)
+        if not forward_id:
+            return []
+        try:
+            resp = await bot.call_action("get_forward_msg", id=forward_id)
+            nodes = resp.get("messages") or resp.get("data", {}).get("messages") or []
+        except Exception as e:
+            logger.warning(f"[SuperDraw] 拉取合并转发消息失败: {e}")
+            return []
+        imgs: list[bytes] = []
+        for node in nodes:
+            content = node.get("content") or node.get("message") or []
+            if not isinstance(content, list):
+                continue
+            for seg in content:
+                if seg.get("type") != "image":
+                    continue
+                url = seg.get("data", {}).get("url") or seg.get("data", {}).get("file")
+                if b := await self._dl(url):
+                    imgs.append(b)
+        return imgs
+
+    def _forward_id_from_raw(self, event: AstrMessageEvent) -> str:
+        msg_obj = getattr(event, "message_obj", None)
+        raw = getattr(msg_obj, "raw_message", None) if msg_obj else None
+        if raw is None:
+            return ""
+        segs = getattr(raw, "message", None) if hasattr(raw, "message") else raw.get("message", [])
+        for seg in segs or []:
+            if seg.get("type") == "forward":
+                return seg.get("data", {}).get("id") or seg.get("data", {}).get("resid") or ""
+        return ""
 
     async def _dl(self, u: str | None) -> bytes | None:
         if not u:
