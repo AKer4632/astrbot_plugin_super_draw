@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import re
 import time
 from typing import Any
 
@@ -26,21 +25,6 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from .data import PluginData
 from .generate import GenerateEngine
 from .tool.file import cleanCache, saveImage
-from .tool.prompt_parser import PromptParser
-
-
-_FLAG_RE = re.compile(r"--(\w+)\s+([^\s-][^\s]*|--[^\s-][^\s]*|\"[^\"]*\"|\'[^\']*\')")
-
-
-def _parse_flags(text: str) -> tuple[dict[str, str], str]:
-    """解析 --key value 参数，返回 (flags, 剩余纯提示词)。"""
-    flags: dict[str, str] = {}
-    rest = text
-    for m in _FLAG_RE.finditer(text):
-        key, value = m.group(1), m.group(2).strip("\"'")
-        flags[key] = value
-        rest = rest[: m.start()] + rest[m.end() :] + " "
-    return flags, " ".join(rest.split())
 
 
 class SuperDraw(Star):
@@ -93,22 +77,17 @@ class SuperDraw(Star):
 
         raw = (event.message_str or "").strip()
         body = raw.split(maxsplit=1)[-1] if " " in raw else ""
-        flags, text = _parse_flags(body)
-        intent = PromptParser.parse(text, {
-            "size": self.data.defaultSize,
-            "quality": self.data.defaultQuality,
-            "format": self.data.saveFormat,
-            "n": 1,
-        })
-        prompt, preset = self.data.resolvePreset(intent.prompt)
+        # 普通 /生图 直接把文字和图片透传给生图模型，不做自然语言解析，避免误伤 prompt
+        # 如需精确控制，可通过 LLM 工具 generate_image 传 size/quality/n 等参数
+        prompt, preset = self.data.resolvePreset(body)
         if not prompt:
             yield event.plain_result("请提供提示词。")
             return
 
-        size = flags.get("size", flags.get("s", intent.size))
-        quality = flags.get("quality", flags.get("q", intent.quality))
-        fmt = flags.get("format", flags.get("f", intent.fmt))
-        n = _to_int(flags.get("n", str(intent.n)), 1, 4)
+        size = self.data.defaultSize
+        quality = self.data.defaultQuality
+        fmt = self.data.saveFormat
+        n = 1
 
         imgs = await self._extract_images(event)
         tid = hashlib.md5(f"{time.time()}{uid}".encode()).hexdigest()[:8]
@@ -117,13 +96,6 @@ class SuperDraw(Star):
             parts.append(f"参考图:{len(imgs)}")
         if preset:
             parts.append(f"预设:{preset}")
-        # 顺便在返回信息里告诉用户检测到了哪些参数
-        if n > 1:
-            parts.append(f"数量:{n}")
-        if quality != "auto":
-            parts.append(f"质量:{quality}")
-        if fmt != "png":
-            parts.append(f"格式:{fmt}")
         yield event.plain_result(" ".join(parts))
 
         self._task_meta[tid] = {"uid": uid, "prompt": prompt[:30], "time": time.time()}
