@@ -1,46 +1,20 @@
-# AstrBot 超级生图插件
+# AstrBot 超级生图插件 v2
 
-给 AstrBot 使用的图像生成插件。支持 OpenAI 兼容接口和 Gemini 官方生图接口，可以调用 `gpt-image-2`、`gemini-2.5-flash-image-preview` 等模型，支持文生图和图生图。
+AstrBot 的图像生成插件，**用极少的代码撑起最强的通用性**：
+- 统一入口：文生图、图生图、LLM 工具调用都走同一套引擎。
+- 多接口适配：OpenAI 兼容接口、Gemini 官方接口，后续新增接口只需加一个适配器类。
+- 多 Provider 容灾：主 Provider 挂了自动切下一个，Key 风控了自动轮下一个 Key。
+- 格式转换：生成后可转 PNG / WebP / JPEG，省带宽。
 
-代码按 HOP（面向人类编程）规范来写，遵循一条直白的主线：
-
-```text
-用户触发命令或 LLM 工具
--> main.py 接收触发
--> 提取提示词、参考图、预设
--> generate.py 执行生图
--> data.py 管理配置和用量
--> tool/ 做文件保存和格式转换
--> AstrBot 把结果发回聊天
-```
-
-## 功能特色
-
-- **OpenAI 兼容格式**：用 OpenAI 官方 SDK，请求格式兼容 OpenAI 接口，支持各种中转服务。
-- **Gemini 官方接口**：用 Google Gen AI SDK 调用 Gemini 生图模型，支持 Gemini API Key。
-- **文生图**：输入文字，生成图片。
-- **图生图**：消息图片、回复链图片、`@用户`头像、合并转发消息、URL、本地文件都可以作为参考图。
-- **LLM 工具调用**：LLM 可以自动调用 `generate_image` 工具，支持同时传入 `imageUrls`（URL 列表）和 `imagePaths`（本地路径列表）。
-- **后台任务**：生图是后台异步执行，不阻塞 LLM 响应。
-- **多 Key 轮换**：请求失败时自动切换下一个 API Key。
-- **预设**：可以保存常用风格、比例和质量。
-- **用户限制**：支持冷却时间和每日次数限制。
-
-## 安装要求
+## 安装
 
 - AstrBot `>= 4.20.1`
 - Python `>= 3.10`
 - 依赖见 [requirements.txt](./requirements.txt)
 
-本插件需要放进 AstrBot 插件目录由 AstrBot 加载，不是独立程序。
+放进 AstrBot 插件目录，配置 API Key，重启即可。
 
 ## 快速开始
-
-1. 把插件目录放到 AstrBot 的插件目录里。
-2. 在 AstrBot 插件配置中添加供应商：OpenAI 兼容接口选择 `openai`，Gemini 官方接口选择 `gemini`。
-3. 填入 API Key；OpenAI 兼容接口按需填写 Base URL，Gemini 官方接口不用填写 Base URL。
-4. 重启 AstrBot 或重新加载插件。
-4. 在聊天里发送：
 
 ```text
 /生图 一只坐在窗边看雨的猫，柔和光线，电影感
@@ -48,224 +22,110 @@
 
 ## 用户命令
 
-### `/生图`
+| 命令 | 说明 |
+| ---- | ---- |
+| `/生图 [参数] 提示词` | 文生图或图生图 |
+| `/生图模型 [数字]` | 查看或切换模型 |
+| `/生图队列` | 查看运行中的任务 |
 
-生成图片。
+### `/生图` 参数
 
-```text
-/生图 一座漂浮在云层上的城市
-```
-
-使用图片作为参考图（消息中的图片会自动作为参考图）：
-
-```text
-发送一张图片，然后在同一条消息里写：
-/生图 改成像素风头像
-```
-
-使用回复里的图片：
+在提示词前加上即可：
 
 ```text
-回复一条带图片的消息：
-/生图 改成赛博朋克风
+/生图 --size 16:9 --quality high --n 2 一座漂浮在云端的未来城市
+/生图 --format webp 一只橘猫
 ```
 
-使用 `@用户` 头像作为参考图（`@` 不需要在消息开头）：
+| 参数 | 取值 | 说明 |
+| ---- | ---- | ---- |
+| `--size` | `auto`、`1:1`、`16:9`、`9:16`、`3:2`、`2:3`、`1024x1024`、`1536x1024`、`1024x1536` | 图片比例或尺寸 |
+| `--quality` | `auto`、`low`、`medium`、`high` | 生成质量（OpenAI 生效） |
+| `--n` | 1-4 | 一次生成几张 |
+| `--format` | `png`、`jpeg`、`webp` | 返回给用户的图片格式 |
 
-```text
-/生图 做成 3D 手办风 @某个用户
-```
+### 参考图来源（自动识别）
 
-使用本地文件作为参考图：
-
-```text
-/生图 保持构图换成水彩风格 d:\images\photo.jpg
-```
-
-使用预设：
-
-```text
-/生图 动漫风 蓝色头发的少女
-```
-
-### `/预设`
-
-查看所有预设：
-
-```text
-/预设
-```
-
-添加预设：
-
-```text
-/预设 添加 动漫风:anime style, clean line art, bright colors
-```
-
-删除预设：
-
-```text
-/预设 删除 动漫风
-```
-
-## LLM 工具调用
-
-插件注册了一个名为 `generate_image` 的工具。LLM 可以自动调用它。
-
-工具参数：
-
-| 参数          | 说明                                                     |
-| ------------- | -------------------------------------------------------- |
-| `prompt`      | 生图提示词，必填                                         |
-| `aspectRatio` | 宽高比，可选 `auto`、`1:1`、`2:3`、`3:2`、`9:16`、`16:9` |
-| `quality`     | 质量，可选 `low`、`medium`、`high`、`auto`               |
-| `imageUrls`   | 图片 URL 列表，作为参考图                                |
-| `imagePaths`  | 本地图片路径列表，作为参考图                             |
-
-LLM 调用时，插件会自动从消息上下文中提取：
 - 消息中的图片
-- 回复链里的图片
-- 合并转发消息里的图片
-- `@用户` 的头像（`@` 不需要在消息开头）
+- 被回复消息中的图片
+- 合并转发消息中的图片
+- `@某个用户` 的头像（`@` 不在消息开头时生效）
+- 消息中的 HTTP/HTTPS 图片 URL
+- 本地文件路径（如 `d:\images\photo.jpg`）
 
-这些上下文中的图片会和 `imageUrls`、`imagePaths` 合并，一起作为参考图。
+### `/生图模型`
 
-### 调用示例
-
-纯文生图：
-
-```python
-generate_image(prompt="一只橘色的猫在阳光下睡觉")
-```
-
-图生图（LLM 自己知道提供 URL）：
-
-```python
-generate_image(
-    prompt="把这张图换成梵高风格",
-    imageUrls=["https://example.com/cat.jpg"]
-)
-```
-
-图生图（使用本地文件）：
-
-```python
-generate_image(
-    prompt="保持人物替换背景",
-    imagePaths=["d:\\images\\portrait.jpg"]
-)
-```
-
-多源参考图叠加：
-
-```python
-generate_image(
-    prompt="结合这两张图的风格创作",
-    imageUrls=["https://example.com/style1.jpg"],
-    imagePaths=["d:\\images\\style2.jpg"]
-)
-```
-
-## 配置说明
-
-### API 供应商
-
-| 配置项             | 默认值        | 说明                                                       |
-| ------------------ | ------------- | ---------------------------------------------------------- |
-| `name`             | `""`          | 供应商名称，例如 `OpenAI`、`Gemini`                        |
-| `api_type`         | `openai`      | 接口类型，`openai` 走 OpenAI 兼容接口，`gemini` 走官方接口 |
-| `api_keys`         | `[]`          | API Key 列表，可以填多个，失败时自动轮换                   |
-| `base_url`         | `""`          | OpenAI 兼容接口地址；Gemini 官方接口会忽略                 |
-| `available_models` | `gpt-image-2` | 当前供应商可切换的模型列表                                 |
-
-Gemini 示例配置：
+查看模型列表：
 
 ```text
-name: Gemini
-api_type: gemini
-api_keys: [你的 Gemini API Key]
-base_url: 留空
-available_models: [gemini-2.5-flash-image-preview]
+/生图模型
 ```
 
-### `generation`
-
-| 配置项                 | 默认值   | 说明                                                 |
-| ---------------------- | -------- | ---------------------------------------------------- |
-| `model`                | `""`     | 当前模型，格式是 `供应商名称/模型名称`，空值自动选择 |
-| `max_retry_attempts`   | `3`      | 最大重试次数                                         |
-| `max_concurrent_tasks` | `3`      | 最大并发任务数                                       |
-| `default_quality`      | `medium` | 默认质量；Gemini 官方接口会忽略这个参数              |
-
-### `user_limits`
-
-| 配置项               | 默认值  | 说明                           |
-| -------------------- | ------- | ------------------------------ |
-| `rate_limit_seconds` | `0`     | 同一用户两次生图之间的冷却时间 |
-| `max_image_size_mb`  | `10`    | 参考图最大大小（MB）           |
-| `enable_daily_limit` | `false` | 是否开启每日次数限制           |
-| `daily_limit_count`  | `10`    | 每个用户每天最多生图次数       |
-
-### `presets`
-
-预设格式：
+切换模型：
 
 ```text
-动漫风:anime style, clean line art, bright colors
+/生图模型 2
 ```
 
-也可以写成 JSON 覆盖默认参数：
+## LLM 工具
 
-```text
-壁纸:{"prompt":"cinematic wallpaper, rich detail","aspectRatio":"16:9","quality":"high"}
-```
+注册工具名：`generate_image`
+
+| 参数 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `prompt` | string | 必填，生图提示词 |
+| `size` | string | 可选，比例或尺寸 |
+| `quality` | string | 可选，`low`/`medium`/`high` |
+| `n` | integer | 可选，生成数量 1-4 |
+| `urls` | array[string] | 可选，参考图 URL 列表 |
+
+LLM 调用时，插件也会自动从当前消息上下文中提取参考图。
 
 ## 项目结构
 
 ```text
-main.py              AstrBot 插件入口，接收触发并分发
-generate.py           通用图片生成库，与 AstrBot 无关
-data.py               插件数据账本，保存配置、用量、预设
-tool/                 通用小工具（文件保存、图片格式转换）
-tool/file.py          文件操作：保存图片、清理缓存目录
-tool/picture.py       图片操作：检测格式、转换格式
+main.py               AstrBot 入口与命令/工具分发
+generate.py           通用生图引擎 + OpenAI/Gemini 适配器
+data.py               配置、用量、模型切换
+tool/file.py          图片保存与格式转换
+tool/picture.py       图片格式检测
 ```
 
-按 HOP 思路读代码时，从 [main.py](./main.py) 开始：
+### 如何新增接口
 
-- `/生图` 或 LLM 工具触发 -> `ImageTool.run()` -> `ImageGenerate.execute()`
-- 预设操作 -> `PresetManage.execute()`
-- 数据和配置 -> [data.py](./data.py)
-- 生图核心逻辑 -> [generate.py](./generate.py)
+在 `generate.py` 里继承 `Adapter`，实现 `generate(prompt, images, size, quality, n)` 方法，然后在 `GenerateEngine._adapter_for` 里注册即可。无需改动 AstrBot 层。
 
-## 生图流程
+## 配置项速览
+
+| 配置 | 说明 |
+| ---- | ---- |
+| `enabled` | 插件总开关 |
+| `enable_llm_tool` | 是否注册 LLM 工具 |
+| `api_providers` | 一个或多个生图供应商 |
+| `generation.model` | 当前模型 `供应商/模型名` |
+| `generation.default_quality` | 默认质量 |
+| `generation.default_size` | 默认比例 |
+| `generation.save_format` | 返回图片格式 |
+| `generation.max_retry_attempts` | 单 Provider 重试次数 |
+| `generation.max_concurrent_tasks` | 最大并发任务数 |
+| `user_limits` | 冷却、每日上限 |
+
+## 原理概览
 
 ```
-用户发送命令或 LLM 调用
--> main.py 接收
--> 提取 prompt、参考图（消息图片/@头像/合并转发/URL/本地文件）
--> 检查用户限制（冷却、每日次数、参考图大小）
--> 调用 generate.py 的 ImageGenerator.generate()
-   - OpenAI 兼容接口：有参考图走 images.edit，没有参考图走 images.generate
-   - Gemini 官方接口：文本和参考图一起走 models.generate_content，从 inline_data 取图片
-   - 自动重试和 Key 轮换
--> 保存图片到缓存目录
--> AstrBot 把结果发回聊天
+用户命令 / LLM 工具
+ -> main.py 提取 prompt、参考图、flag
+ -> data.py 检查限制、解析预设
+ -> GenerateEngine 选择 Provider 并调用 Adapter
+    -> OpenAIAdapter: images.generate / images.edit
+    -> GeminiAdapter: models.generate_content
+ -> 失败则自动切到下一个 Provider / Key
+ -> tool/file.py 保存并转格式
+ -> AstrBot 发送结果
 ```
 
 ## 常见问题
 
-### 为什么有参考图却没有进入图生图？
-
-检查参考图是否可访问：消息图片是否还在、URL 是否有效、文件路径是否正确。
-
-### 为什么生图失败？
-
-1. 确认 API Key 有效
-2. OpenAI 兼容接口要确认 Base URL 正确（中转服务需要支持 OpenAI 图片接口）
-3. Gemini 官方接口要确认 `api_type` 是 `gemini`，并且已安装 `google-genai`
-4. 确认模型支持图片输出和图生图，例如 `gpt-image-2`、`gemini-2.5-flash-image-preview`
-
-### 缓存图片会一直增长吗？
-
-不会。插件会定时清理缓存目录，保留最新生成的部分图片。
+- **报错 `未配置生图 provider`**：检查 `api_providers` 里是否填了 `api_keys` 和 `available_models`。
+- **OpenAI 报错 size 不对**：插件已经自动把 `auto` / `16:9` 等映射成合法尺寸。
+- **Gemini 没图**：确认 `api_type` 为 `gemini`，并且已安装 `google-genai`。
