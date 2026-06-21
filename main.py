@@ -26,6 +26,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from .data import PluginData
 from .generate import GenerateEngine
 from .tool.file import cleanCache, saveImage
+from .tool.prompt_parser import PromptParser
 
 
 _FLAG_RE = re.compile(r"--(\w+)\s+([^\s-][^\s]*|--[^\s-][^\s]*|\"[^\"]*\"|\'[^\']*\')")
@@ -92,16 +93,22 @@ class SuperDraw(Star):
 
         raw = (event.message_str or "").strip()
         body = raw.split(maxsplit=1)[-1] if " " in raw else ""
-        flags, prompt = _parse_flags(body)
-        prompt, preset = self.data.resolvePreset(prompt)
+        flags, text = _parse_flags(body)
+        intent = PromptParser.parse(text, {
+            "size": self.data.defaultSize,
+            "quality": self.data.defaultQuality,
+            "format": self.data.saveFormat,
+            "n": 1,
+        })
+        prompt, preset = self.data.resolvePreset(intent.prompt)
         if not prompt:
             yield event.plain_result("请提供提示词。")
             return
 
-        size = flags.get("size", flags.get("s", self.data.defaultSize))
-        quality = flags.get("quality", flags.get("q", self.data.defaultQuality))
-        fmt = flags.get("format", flags.get("f", self.data.saveFormat))
-        n = _to_int(flags.get("n", "1"), 1, 4)
+        size = flags.get("size", flags.get("s", intent.size))
+        quality = flags.get("quality", flags.get("q", intent.quality))
+        fmt = flags.get("format", flags.get("f", intent.fmt))
+        n = _to_int(flags.get("n", str(intent.n)), 1, 4)
 
         imgs = await self._extract_images(event)
         tid = hashlib.md5(f"{time.time()}{uid}".encode()).hexdigest()[:8]
@@ -110,8 +117,13 @@ class SuperDraw(Star):
             parts.append(f"参考图:{len(imgs)}")
         if preset:
             parts.append(f"预设:{preset}")
+        # 顺便在返回信息里告诉用户检测到了哪些参数
         if n > 1:
             parts.append(f"数量:{n}")
+        if quality != "auto":
+            parts.append(f"质量:{quality}")
+        if fmt != "png":
+            parts.append(f"格式:{fmt}")
         yield event.plain_result(" ".join(parts))
 
         self._task_meta[tid] = {"uid": uid, "prompt": prompt[:30], "time": time.time()}
