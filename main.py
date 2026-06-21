@@ -307,7 +307,7 @@ class SuperDraw(Star):
             prompt(string): 用户想要的图片内容描述，必填
             size(string): 生成图片的比例，可选 auto、1:1、16:9、9:16、3:2、2:3
             quality(string): 图片质量，可选 auto、low、medium、high
-            n(integer): 生成数量，范围 1-4
+            n(int): 生成数量，范围 1-4
             urls(string): 参考图 URL，多个地址用英文逗号分隔
         """
 
