@@ -1,249 +1,252 @@
 """
-通用生图引擎，与 AstrBot 完全解耦。
+生图接口调用。
 
-提供统一的 `GenerateEngine.generate()` 入口，内部根据 provider 类型分发到对应适配器：
-- OpenAIAdapter：兼容 OpenAI /images/generate 与 /images/edit
-- GeminiAdapter：兼容 Google Gemini 官方生图接口
+拿到提示词和参考图，调用 OpenAI 或 Gemini 接口生图，返回图片字节列表。
+支持多个 provider 故障转移（当前的挂了自动试下一个），
+每个 provider 内部支持多 key 轮换（当前 key 被限流了自动换下一个）。
 
-支持多 provider 故障转移、API Key 轮询、统一尺寸/质量语义。
+这个文件和 AstrBot 完全无关，只要传入 provider 配置就能用。
+
+provider 是一个普通 dict，格式如下：
+    {"name": "OpenAI", "apiType": "openai", "baseUrl": "https://api.openai.com",
+     "apiKeys": ["sk-xxx"], "model": "gpt-image-2", "timeout": 180, "maxRetry": 3}
+
+调用示例：
+    result = await makeImages(providers, 0, "一只猫", [], "auto", "medium", 1)
+    result = await makeImages(providers, 0, "变成水彩风", [refImg], "16:9", "high", 2)
+    await closeClients()  # 插件关闭时调用，释放 HTTP 连接
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
-from abc import ABC, abstractmethod
-from typing import Any
+import base64  # 解码 OpenAI 返回的 base64 图片数据
+from typing import Any  # 类型标注
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI  # OpenAI 官方异步客户端
 
+# 图片格式识别，给参考图标注正确的 MIME 类型
 try:
     from .tool.picture import detectMimeType
-except ImportError:  # pragma: no cover
+except ImportError:
     from tool.picture import detectMimeType
 
+# Gemini SDK 是可选依赖，没装就只能用 OpenAI 接口
 try:
-    from google import genai
-    from google.genai import types as genaiTypes
-except ImportError:  # pragma: no cover
+    from google import genai  # Gemini 官方 SDK
+    from google.genai import types as genaiTypes  # Gemini 的请求/响应类型
+except ImportError:
     genai = None
     genaiTypes = None
 
 
-class Provider:
-    """一个生图 provider 的运行时配置。"""
-
-    __slots__ = ("name", "api_type", "base_url", "api_keys", "model", "timeout", "max_retry")
-
-    def __init__(
-        self,
-        name: str,
-        api_type: str,
-        api_keys: list[str],
-        model: str,
-        base_url: str = "",
-        timeout: int = 180,
-        max_retry: int = 3,
-    ):
-        self.name = name
-        self.api_type = api_type
-        self.api_keys = api_keys
-        self.model = model
-        self.base_url = (base_url or "https://api.openai.com").rstrip("/")
-        self.timeout = timeout
-        self.max_retry = max(1, max_retry)
+# ========== 客户端缓存 ==========
+# 按 (接口类型, 地址, key) 缓存，避免每次生图都新建 HTTP 客户端
+_clients: dict[tuple, Any] = {}
 
 
-class Adapter(ABC):
-    """生图适配器基类。"""
-
-    def __init__(self, provider: Provider):
-        self.provider = provider
-        self._client: Any = None
-        self._key_index = 0
-
-    @abstractmethod
-    async def generate(self, prompt: str, images: list[bytes], size: str, quality: str, n: int) -> list[bytes]:
-        """生成图片，返回 bytes 列表。"""
-
-    def _current_key(self) -> str:
-        return self.provider.api_keys[self._key_index % len(self.provider.api_keys)]
-
-    def _rotate_key(self) -> None:
-        if len(self.provider.api_keys) > 1:
-            self._key_index = (self._key_index + 1) % len(self.provider.api_keys)
-        self._client = None
-
-    async def close(self) -> None:
-        if self._client is not None:
-            if hasattr(self._client, "close"):
-                await self._client.close()
-            elif hasattr(self._client, "aio") and hasattr(self._client.aio, "aclose"):
-                await self._client.aio.aclose()
-            self._client = None
+# ========== 统一入口 ==========
 
 
-class OpenAIAdapter(Adapter):
-    """OpenAI 兼容接口适配器。"""
+async def makeImages(
+    providers: list[dict],
+    currentIndex: int,
+    prompt: str,
+    images: list[bytes],
+    size: str = "auto",
+    quality: str = "auto",
+    n: int = 1,
+) -> list[bytes]:
+    """
+    统一生图入口。从 currentIndex 开始逐个尝试 provider，
+    第一个成功就返回图片列表，全部失败则抛出 RuntimeError。
+    """
 
-    _VALID_QUALITIES = {"low", "medium", "high", "auto"}
-    _VALID_SIZES = {"1024x1024", "1536x1024", "1024x1536"}
+    if not providers:
+        raise ValueError("没有配置生图 provider")
 
-    async def generate(self, prompt: str, images: list[bytes], size: str, quality: str, n: int) -> list[bytes]:
-        last_error = "生成失败"
-        for _ in range(self.provider.max_retry):
-            try:
-                client = self._get_client()
-                kwargs = {
-                    "model": self.provider.model,
-                    "prompt": prompt,
-                    "n": min(max(1, n), 4),
-                    "size": self._resolve_size(size),
-                }
-                if quality in self._VALID_QUALITIES and quality != "auto":
-                    kwargs["quality"] = quality
-                if images:
-                    kwargs["image"] = [(f"ref_{i}.png", img, detectMimeType(img)) for i, img in enumerate(images[:16])]
-                    response = await client.images.edit(**kwargs)
-                else:
-                    response = await client.images.generate(**kwargs)
-                return self._extract(response)
-            except Exception as exc:
-                last_error = str(exc)
-                self._rotate_key()
-        raise RuntimeError(f"OpenAI 适配器重试 {self.provider.max_retry} 次后失败: {last_error}")
+    # 把 provider 列表从 currentIndex 开始重排，优先用用户选中的
+    ordered = providers[currentIndex:] + providers[:currentIndex]
+    lastError = "生成失败"
 
-    def _get_client(self) -> AsyncOpenAI:
-        if self._client is None:
-            self._client = AsyncOpenAI(
-                api_key=self._current_key(),
-                base_url=f"{self.provider.base_url}/v1",
-                timeout=self.provider.timeout,
-                max_retries=0,
-            )
-        return self._client
+    for p in ordered:
+        try:
+            if p["apiType"] == "gemini":
+                return await _callGemini(p, prompt, images, size, quality, n)
+            return await _callOpenAi(p, prompt, images, size, quality, n)
+        except Exception as e:
+            lastError = str(e)  # 记住最后一个错误，全失败时报告
 
-    @staticmethod
-    def _resolve_size(size: str) -> str:
-        if size in OpenAIAdapter._VALID_SIZES:
-            return size
-        return "1024x1024"
-
-    @staticmethod
-    def _extract(response: Any) -> list[bytes]:
-        result = []
-        for item in response.data or []:
-            if getattr(item, "b64_json", None):
-                result.append(base64.b64decode(item.b64_json))
-        if not result:
-            raise ValueError("响应中未找到有效图片数据")
-        return result
+    raise RuntimeError(f"所有 provider 均失败: {lastError}")
 
 
-class GeminiAdapter(Adapter):
-    """Google Gemini 官方接口适配器。"""
+async def closeClients():
+    """关闭所有缓存的 HTTP 客户端。插件关闭时调用。"""
 
-    _RATIO_MAP = {
-        "1024x1024": "1:1",
-        "1536x1024": "16:9",
-        "1024x1536": "9:16",
-        "1:1": "1:1",
-        "16:9": "16:9",
-        "9:16": "9:16",
-        "3:2": "3:2",
-        "2:3": "2:3",
-    }
-
-    async def generate(self, prompt: str, images: list[bytes], size: str, quality: str, n: int) -> list[bytes]:
-        if genaiTypes is None or genai is None:
-            raise RuntimeError("缺少 google-genai 依赖")
-        last_error = "生成失败"
-        for _ in range(self.provider.max_retry):
-            try:
-                client = self._get_client()
-                contents = self._build_contents(prompt, images)
-                config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
-                ratio = self._RATIO_MAP.get(size)
-                if ratio:
-                    config.image_config = genaiTypes.ImageConfig(aspect_ratio=ratio)
-                imgs: list[bytes] = []
-                for _ in range(min(max(1, n), 4)):
-                    response = await client.aio.models.generate_content(
-                        model=self.provider.model,
-                        contents=contents,
-                        config=config,
-                    )
-                    imgs.extend(self._extract(response))
-                return imgs
-            except Exception as exc:
-                last_error = str(exc)
-                self._rotate_key()
-        raise RuntimeError(f"Gemini 适配器重试 {self.provider.max_retry} 次后失败: {last_error}")
-
-    def _get_client(self) -> Any:
-        if self._client is None:
-            self._client = genai.Client(api_key=self._current_key())
-        return self._client
-
-    def _build_contents(self, prompt: str, images: list[bytes]) -> list[Any]:
-        parts: list[Any] = [genaiTypes.Part.from_text(text=prompt)]
-        for img in images[:16]:
-            mime = detectMimeType(img)
-            if mime.startswith("image/"):
-                parts.append(genaiTypes.Part.from_bytes(data=img, mime_type=mime))
-        return parts
-
-    @staticmethod
-    def _extract(response: Any) -> list[bytes]:
-        result = []
-        for part in getattr(response, "parts", []) or []:
-            inline = getattr(part, "inline_data", None)
-            data = getattr(inline, "data", None) if inline else None
-            if isinstance(data, bytes):
-                result.append(data)
-            elif isinstance(data, str):
-                result.append(base64.b64decode(data))
-        if not result:
-            raise ValueError("Gemini 响应中未找到图片数据")
-        return result
+    for client in _clients.values():
+        try:
+            if hasattr(client, "close"):  # OpenAI 客户端用 close()
+                await client.close()
+            elif hasattr(client, "aio") and hasattr(client.aio, "aclose"):  # Gemini 客户端用 aio.aclose()
+                await client.aio.aclose()
+        except Exception:
+            pass
+    _clients.clear()
 
 
-class GenerateEngine:
-    """统一生图引擎：负责 provider 选择、故障转移与资源释放。"""
+# ========== OpenAI 兼容接口 ==========
 
-    def __init__(self, providers: list[Provider], current: int = 0):
-        self.providers = providers
-        self.current_index = current
-        self._adapters: dict[int, Adapter] = {}
+# 用户友好的比例名 -> OpenAI 接受的像素尺寸
+_OA_SIZES = {
+    "1:1": "1024x1024",
+    "16:9": "1536x1024",
+    "9:16": "1024x1536",  # 常用比例
+    "3:2": "1536x1024",
+    "2:3": "1024x1536",  # 近似映射
+    "1024x1024": "1024x1024",
+    "1536x1024": "1536x1024",
+    "1024x1536": "1024x1536",  # 直接传像素也行
+}
 
-    async def generate(
-        self,
-        prompt: str,
-        images: list[bytes] | None = None,
-        size: str = "auto",
-        quality: str = "auto",
-        n: int = 1,
-    ) -> list[bytes]:
-        if not self.providers:
-            raise ValueError("未配置生图 provider")
-        images = images or []
-        providers = self.providers[self.current_index :] + self.providers[: self.current_index]
-        last_error = "生成失败"
-        for provider in providers:
-            adapter = self._adapter_for(provider)
-            try:
-                return await adapter.generate(prompt, images, size, quality, n)
-            except Exception as exc:
-                last_error = str(exc)
-                continue
-        raise RuntimeError(f"所有 provider 均失败: {last_error}")
+# OpenAI 接受的质量值
+_OA_QUALITIES = {"low", "medium", "high"}
 
-    def _adapter_for(self, provider: Provider) -> Adapter:
-        key = id(provider)
-        if key not in self._adapters:
-            self._adapters[key] = OpenAIAdapter(provider) if provider.api_type == "openai" else GeminiAdapter(provider)
-        return self._adapters[key]
 
-    async def close(self) -> None:
-        await asyncio.gather(*(adapter.close() for adapter in self._adapters.values()), return_exceptions=True)
-        self._adapters.clear()
+async def _callOpenAi(p: dict, prompt: str, images: list[bytes], size: str, quality: str, n: int) -> list[bytes]:
+    """
+    调用 OpenAI 兼容接口生图。
+    有参考图走 images.edit（图生图），没有走 images.generate（文生图）。
+    失败时自动轮换 API Key 重试。
+    """
+
+    lastError = "生成失败"
+    keyIdx = 0  # 当前使用第几个 key
+    maxRetry = max(1, p.get("maxRetry", 3))
+
+    for _ in range(maxRetry):
+        try:
+            key = p["apiKeys"][keyIdx % len(p["apiKeys"])]  # 取当前 key
+            client = _openAiClient(p["baseUrl"], key, p.get("timeout", 180))
+
+            # 构建请求参数
+            kwargs: dict[str, Any] = {
+                "model": p["model"],
+                "prompt": prompt,
+                "n": min(max(1, n), 4),  # 限制 1-4 张
+                "size": _OA_SIZES.get(size, "1024x1024"),  # 转成像素尺寸
+            }
+            if quality in _OA_QUALITIES:  # "auto" 时不传，让接口自己决定
+                kwargs["quality"] = quality
+
+            # 有参考图用 edit 接口，没有用 generate 接口
+            if images:
+                kwargs["image"] = [(f"ref_{i}.png", img, detectMimeType(img)) for i, img in enumerate(images[:16])]
+                resp = await client.images.edit(**kwargs)
+            else:
+                resp = await client.images.generate(**kwargs)
+
+            # 从响应里取出 base64 编码的图片，解码成 bytes
+            result = [base64.b64decode(d.b64_json) for d in (resp.data or []) if getattr(d, "b64_json", None)]
+            if not result:
+                raise ValueError("OpenAI 响应中没有图片数据")
+            return result
+
+        except Exception as e:
+            lastError = str(e)
+            _clients.pop(("openai", p["baseUrl"], p["apiKeys"][keyIdx % len(p["apiKeys"])]), None)  # 丢掉失败的客户端
+            keyIdx += 1  # 换下一个 key
+
+    raise RuntimeError(f"OpenAI 重试 {maxRetry} 次后失败: {lastError}")
+
+
+def _openAiClient(baseUrl: str, apiKey: str, timeout: int) -> AsyncOpenAI:
+    """获取或创建 OpenAI 客户端（按地址 + key 缓存）。"""
+
+    k = ("openai", baseUrl, apiKey)
+    if k not in _clients:
+        _clients[k] = AsyncOpenAI(api_key=apiKey, base_url=f"{baseUrl}/v1", timeout=timeout, max_retries=0)
+    return _clients[k]
+
+
+# ========== Gemini 官方接口 ==========
+
+# Gemini 接口直接用比例名，像素尺寸也帮你转成比例
+_GM_RATIOS = {
+    "1024x1024": "1:1",
+    "1536x1024": "16:9",
+    "1024x1536": "9:16",  # 像素 -> 比例
+    "1:1": "1:1",
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "3:2": "3:2",
+    "2:3": "2:3",  # 比例直接用
+}
+
+
+async def _callGemini(p: dict, prompt: str, images: list[bytes], size: str, quality: str, n: int) -> list[bytes]:
+    """
+    调用 Gemini 官方生图接口。
+    Gemini 不支持批量生成，所以循环调用 n 次。
+    失败时自动轮换 API Key 重试。
+    """
+
+    if genai is None:
+        raise RuntimeError("缺少 google-genai 依赖，请 pip install google-genai")
+
+    lastError = "生成失败"
+    keyIdx = 0
+    maxRetry = max(1, p.get("maxRetry", 3))
+
+    for _ in range(maxRetry):
+        try:
+            key = p["apiKeys"][keyIdx % len(p["apiKeys"])]  # 取当前 key
+            client = _geminiClient(key)
+
+            # 构建请求内容：文字提示词 + 参考图
+            parts: list[Any] = [genaiTypes.Part.from_text(text=prompt)]
+            for img in images[:16]:
+                mime = detectMimeType(img)
+                if mime.startswith("image/"):  # 只传真正的图片，跳过无法识别的
+                    parts.append(genaiTypes.Part.from_bytes(data=img, mime_type=mime))
+
+            # 配置生成参数：要求返回图片
+            config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+            ratio = _GM_RATIOS.get(size)
+            if ratio:  # 有对应比例就设置，没有就让模型自己决定
+                config.image_config = genaiTypes.ImageConfig(aspect_ratio=ratio)
+
+            # Gemini 每次只生成一张，要 n 张就调 n 次
+            result: list[bytes] = []
+            for _ in range(min(max(1, n), 4)):
+                resp = await client.aio.models.generate_content(
+                    model=p["model"],
+                    contents=parts,
+                    config=config,
+                )
+                # 从响应里提取图片字节
+                for part in getattr(resp, "parts", []) or []:
+                    inline = getattr(part, "inline_data", None)
+                    data = getattr(inline, "data", None) if inline else None
+                    if isinstance(data, bytes):  # 直接就是字节
+                        result.append(data)
+                    elif isinstance(data, str):  # base64 编码的字符串
+                        result.append(base64.b64decode(data))
+
+            if not result:
+                raise ValueError("Gemini 响应中没有图片数据")
+            return result
+
+        except Exception as e:
+            lastError = str(e)
+            _clients.pop(("gemini", p["apiKeys"][keyIdx % len(p["apiKeys"])]), None)  # 丢掉失败的客户端
+            keyIdx += 1  # 换下一个 key
+
+    raise RuntimeError(f"Gemini 重试 {maxRetry} 次后失败: {lastError}")
+
+
+def _geminiClient(apiKey: str) -> Any:
+    """获取或创建 Gemini 客户端（按 key 缓存）。"""
+
+    k = ("gemini", apiKey)
+    if k not in _clients:
+        _clients[k] = genai.Client(api_key=apiKey)
+    return _clients[k]
