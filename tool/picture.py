@@ -63,7 +63,7 @@ def detectMimeType(data: bytes) -> str:
 TargetFormat = Literal["png", "jpeg"]
 
 
-def normalize_to_supported_image(data: bytes, target_fmt: TargetFormat = "png") -> tuple[bytes, str]):
+def normalize_to_supported_image(data: bytes, target_fmt: TargetFormat = "png") -> tuple[bytes, str]:
     """
     把动态图（GIF/动画 WebP）或不支持的格式转成静态首帧。
 
