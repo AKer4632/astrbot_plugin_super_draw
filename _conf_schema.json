@@ -144,6 +144,31 @@
           "medium",
           "high"
         ]
+      },
+      "default_size": {
+        "description": "默认尺寸/比例",
+        "hint": "默认生成的图片比例",
+        "type": "string",
+        "default": "auto",
+        "options": [
+          "auto",
+          "1:1",
+          "16:9",
+          "9:16",
+          "3:2",
+          "2:3"
+        ]
+      },
+      "save_format": {
+        "description": "图片保存格式",
+        "hint": "生图结果转换为指定格式发送，推荐 jpeg 或 webp 省带宽",
+        "type": "string",
+        "default": "png",
+        "options": [
+          "png",
+          "jpeg",
+          "webp"
+        ]
       }
     }
   },
