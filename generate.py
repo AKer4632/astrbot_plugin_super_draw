@@ -2,8 +2,8 @@
 生图接口调用。
 
 拿到提示词和参考图，调用 OpenAI 或 Gemini 接口生图，返回图片字节列表。
-支持多个 provider 故障转移（当前的挂了自动试下一个），
-每个 provider 内部支持多 key 轮换（当前 key 被限流了自动换下一个）。
+不故障转移：只使用指定的单个 provider，失败了直接抛异常。
+每个 provider 内部也只使用第一个 apiKey，不轮换不兜底。
 
 这个文件和 AstrBot 完全无关，只要传入 provider 配置就能用。
 
@@ -57,26 +57,19 @@ async def makeImages(
     n: int = 1,
 ) -> list[bytes]:
     """
-    统一生图入口。从 currentIndex 开始逐个尝试 provider，
-    第一个成功就返回图片列表，全部失败则抛出 RuntimeError。
+    统一生图入口。只使用 currentIndex 指定的单个 provider，
+    失败了直接抛出异常，不轮询、不故障转移。
     """
 
     if not providers:
         raise ValueError("没有配置生图 provider")
+    if not 0 <= currentIndex < len(providers):
+        raise ValueError(f"currentIndex {currentIndex} 越界")
 
-    # 把 provider 列表从 currentIndex 开始重排，优先用用户选中的
-    ordered = providers[currentIndex:] + providers[:currentIndex]
-    lastError = "生成失败"
-
-    for p in ordered:
-        try:
-            if p["apiType"] == "gemini":
-                return await _callGemini(p, prompt, images, size, quality, n)
-            return await _callOpenAi(p, prompt, images, size, quality, n)
-        except Exception as e:
-            lastError = str(e)  # 记住最后一个错误，全失败时报告
-
-    raise RuntimeError(f"所有 provider 均失败: {lastError}")
+    p = providers[currentIndex]
+    if p["apiType"] == "gemini":
+        return await _callGemini(p, prompt, images, size, quality, n)
+    return await _callOpenAi(p, prompt, images, size, quality, n)
 
 
 async def closeClients():
@@ -115,47 +108,37 @@ async def _callOpenAi(p: dict, prompt: str, images: list[bytes], size: str, qual
     """
     调用 OpenAI 兼容接口生图。
     有参考图走 images.edit（图生图），没有走 images.generate（文生图）。
-    失败时自动轮换 API Key 重试。
+    只使用第一个 apiKey，失败了直接抛异常，不重试不轮换。
     """
 
-    lastError = "生成失败"
-    keyIdx = 0  # 当前使用第几个 key
-    maxRetry = max(1, p.get("maxRetry", 3))
+    if not p.get("apiKeys"):
+        raise RuntimeError("OpenAI provider 没有配置 apiKeys")
 
-    for _ in range(maxRetry):
-        try:
-            key = p["apiKeys"][keyIdx % len(p["apiKeys"])]  # 取当前 key
-            client = _openAiClient(p["baseUrl"], key, p.get("timeout", 180))
+    key = p["apiKeys"][0]
+    client = _openAiClient(p["baseUrl"], key, p.get("timeout", 180))
 
-            # 构建请求参数
-            kwargs: dict[str, Any] = {
-                "model": p["model"],
-                "prompt": prompt,
-                "n": min(max(1, n), 4),  # 限制 1-4 张
-                "size": _OA_SIZES.get(size, "1024x1024"),  # 转成像素尺寸
-            }
-            if quality in _OA_QUALITIES:  # "auto" 时不传，让接口自己决定
-                kwargs["quality"] = quality
+    # 构建请求参数
+    kwargs: dict[str, Any] = {
+        "model": p["model"],
+        "prompt": prompt,
+        "n": min(max(1, n), 4),  # 限制 1-4 张
+        "size": _OA_SIZES.get(size, "1024x1024"),  # 转成像素尺寸
+    }
+    if quality in _OA_QUALITIES:  # "auto" 时不传，让接口自己决定
+        kwargs["quality"] = quality
 
-            # 有参考图用 edit 接口，没有用 generate 接口
-            if images:
-                kwargs["image"] = [(f"ref_{i}.png", img, detectMimeType(img)) for i, img in enumerate(images[:16])]
-                resp = await client.images.edit(**kwargs)
-            else:
-                resp = await client.images.generate(**kwargs)
+    # 有参考图用 edit 接口，没有用 generate 接口
+    if images:
+        kwargs["image"] = [(f"ref_{i}.png", img, detectMimeType(img)) for i, img in enumerate(images[:16])]
+        resp = await client.images.edit(**kwargs)
+    else:
+        resp = await client.images.generate(**kwargs)
 
-            # 从响应里取出 base64 编码的图片，解码成 bytes
-            result = [base64.b64decode(d.b64_json) for d in (resp.data or []) if getattr(d, "b64_json", None)]
-            if not result:
-                raise ValueError("OpenAI 响应中没有图片数据")
-            return result
-
-        except Exception as e:
-            lastError = str(e)
-            _clients.pop(("openai", p["baseUrl"], p["apiKeys"][keyIdx % len(p["apiKeys"])]), None)  # 丢掉失败的客户端
-            keyIdx += 1  # 换下一个 key
-
-    raise RuntimeError(f"OpenAI 重试 {maxRetry} 次后失败: {lastError}")
+    # 从响应里取出 base64 编码的图片，解码成 bytes
+    result = [base64.b64decode(d.b64_json) for d in (resp.data or []) if getattr(d, "b64_json", None)]
+    if not result:
+        raise ValueError("OpenAI 响应中没有图片数据")
+    return result
 
 
 def _openAiClient(baseUrl: str, apiKey: str, timeout: int) -> AsyncOpenAI:
@@ -186,61 +169,51 @@ async def _callGemini(p: dict, prompt: str, images: list[bytes], size: str, qual
     """
     调用 Gemini 官方生图接口。
     Gemini 不支持批量生成，所以循环调用 n 次。
-    失败时自动轮换 API Key 重试。
+    只使用第一个 apiKey，失败了直接抛异常，不重试不轮换。
     """
 
     if genai is None:
         raise RuntimeError("缺少 google-genai 依赖，请 pip install google-genai")
 
-    lastError = "生成失败"
-    keyIdx = 0
-    maxRetry = max(1, p.get("maxRetry", 3))
+    if not p.get("apiKeys"):
+        raise RuntimeError("Gemini provider 没有配置 apiKeys")
 
-    for _ in range(maxRetry):
-        try:
-            key = p["apiKeys"][keyIdx % len(p["apiKeys"])]  # 取当前 key
-            client = _geminiClient(key)
+    key = p["apiKeys"][0]
+    client = _geminiClient(key)
 
-            # 构建请求内容：文字提示词 + 参考图
-            parts: list[Any] = [genaiTypes.Part.from_text(text=prompt)]
-            for img in images[:16]:
-                mime = detectMimeType(img)
-                if mime.startswith("image/"):  # 只传真正的图片，跳过无法识别的
-                    parts.append(genaiTypes.Part.from_bytes(data=img, mime_type=mime))
+    # 构建请求内容：文字提示词 + 参考图
+    parts: list[Any] = [genaiTypes.Part.from_text(text=prompt)]
+    for img in images[:16]:
+        mime = detectMimeType(img)
+        if mime.startswith("image/"):  # 只传真正的图片，跳过无法识别的
+            parts.append(genaiTypes.Part.from_bytes(data=img, mime_type=mime))
 
-            # 配置生成参数：要求返回图片
-            config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
-            ratio = _GM_RATIOS.get(size)
-            if ratio:  # 有对应比例就设置，没有就让模型自己决定
-                config.image_config = genaiTypes.ImageConfig(aspect_ratio=ratio)
+    # 配置生成参数：要求返回图片
+    config = genaiTypes.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+    ratio = _GM_RATIOS.get(size)
+    if ratio:  # 有对应比例就设置，没有就让模型自己决定
+        config.image_config = genaiTypes.ImageConfig(aspect_ratio=ratio)
 
-            # Gemini 每次只生成一张，要 n 张就调 n 次
-            result: list[bytes] = []
-            for _ in range(min(max(1, n), 4)):
-                resp = await client.aio.models.generate_content(
-                    model=p["model"],
-                    contents=parts,
-                    config=config,
-                )
-                # 从响应里提取图片字节
-                for part in getattr(resp, "parts", []) or []:
-                    inline = getattr(part, "inline_data", None)
-                    data = getattr(inline, "data", None) if inline else None
-                    if isinstance(data, bytes):  # 直接就是字节
-                        result.append(data)
-                    elif isinstance(data, str):  # base64 编码的字符串
-                        result.append(base64.b64decode(data))
+    # Gemini 每次只生成一张，要 n 张就调 n 次
+    result: list[bytes] = []
+    for _ in range(min(max(1, n), 4)):
+        resp = await client.aio.models.generate_content(
+            model=p["model"],
+            contents=parts,
+            config=config,
+        )
+        # 从响应里提取图片字节
+        for part in getattr(resp, "parts", []) or []:
+            inline = getattr(part, "inline_data", None)
+            data = getattr(inline, "data", None) if inline else None
+            if isinstance(data, bytes):  # 直接就是字节
+                result.append(data)
+            elif isinstance(data, str):  # base64 编码的字符串
+                result.append(base64.b64decode(data))
 
-            if not result:
-                raise ValueError("Gemini 响应中没有图片数据")
-            return result
-
-        except Exception as e:
-            lastError = str(e)
-            _clients.pop(("gemini", p["apiKeys"][keyIdx % len(p["apiKeys"])]), None)  # 丢掉失败的客户端
-            keyIdx += 1  # 换下一个 key
-
-    raise RuntimeError(f"Gemini 重试 {maxRetry} 次后失败: {lastError}")
+    if not result:
+        raise ValueError("Gemini 响应中没有图片数据")
+    return result
 
 
 def _geminiClient(apiKey: str) -> Any:
