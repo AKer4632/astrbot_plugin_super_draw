@@ -377,7 +377,16 @@ class SuperDraw(Star):
 
             except Exception as e:
                 logger.error(f"[SuperDraw] 生图失败: {e}")
-                await self.context.send_message(uid, MessageChain().message(f"生图失败: {e}"))
+                err_text = str(e)
+                if "content_policy_violation" in err_text:
+                    display = "内容被安全策略拦截，请调整提示词或参考图后重试。"
+                elif "API key not valid" in err_text:
+                    display = "API Key 无效，请检查配置。"
+                elif "timeout" in err_text.lower() or "408" in err_text:
+                    display = "生图超时，服务器繁忙，请稍后重试。"
+                else:
+                    display = f"生图失败: {e}"
+                await self.context.send_message(uid, MessageChain().message(display))
 
             finally:
                 self._taskMeta.pop(tid, None)  # 清理任务元信息
