@@ -48,14 +48,16 @@ class SuperDraw(Star):
         self.dataDir = StarTools.get_data_dir()
         self.data = PluginData(config, self.dataDir)
 
-        if not self.data.enabled:
-            logger.info("[SuperDraw] 插件已禁用。")
-            return
-
+        # 这些属性必须无条件初始化。即使插件被禁用，/生图开关 等命令仍可能被调用，
+        # 如果 _tasks、_taskMeta 不存在，访问时会抛出 AttributeError。
         self.cacheDir = self.dataDir / "cache"  # 生成的图片缓存在这里
         self.semaphore = asyncio.Semaphore(self.data.maxConcurrent)  # 控制同时跑多少个生图任务
         self._tasks: dict[str, asyncio.Task] = {}  # 后台任务表：任务ID -> Task
         self._taskMeta: dict[str, dict[str, Any]] = {}  # 任务元信息：任务ID -> {uid, prompt, time}
+
+        if not self.data.enabled:
+            logger.info("[SuperDraw] 插件已禁用。")
+            return
 
     # ========== 生命周期 ==========
 
